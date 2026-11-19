@@ -1,0 +1,3 @@
+node_modules/
+.factory/state/*
+!.factory/state/.gitkeep

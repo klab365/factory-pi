@@ -1,0 +1,35 @@
+name: Work on factory-pi
+inputs:
+  goal:
+    description: What should the factory implement or change in this repository?
+    required: true
+
+steps:
+  - id: implement
+    name: Implement requested change
+    agent: builder
+    maxVisits: 3
+    transitions:
+      completed: review
+    task: |-
+      Work in the current factory-pi repository and implement this goal:
+
+      ${{ inputs.goal }}
+
+      Inspect the relevant files first, make the required changes, and run focused checks if useful.
+      Address prior reviewer feedback if provided:
+      ${{ steps.review.feedback }}
+
+  - id: review
+    name: Review implementation
+    agent: reviewer
+    maxVisits: 3
+    transitions:
+      approved: end
+      changes_requested: implement
+    task: |-
+      Review the changes made in this run for correctness, regressions, and missing tests.
+      Focus on the requested goal: ${{ inputs.goal }}.
+      Run `mise run check` and report its result.
+      Report actionable findings with file and line references. Do not modify files.
+      Return status `approved` when clean, otherwise `changes_requested` and put actionable fixes in `feedback`.

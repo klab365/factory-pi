@@ -1,0 +1,29 @@
+[tools]
+bun = "latest"
+
+[hooks]
+postinstall = "bun install"
+
+[tasks]
+factory = "bun run src/cli.ts"
+
+[tasks.format]
+run = "bun run format"
+
+[tasks.check-format]
+run = "bun run check-format"
+
+[tasks.lint]
+run = "bun run lint"
+
+[tasks.tests]
+run = "bun run test"
+
+[tasks.typecheck]
+run = "bun run typecheck"
+
+[tasks.validate]
+run = "bun run validate"
+
+[tasks.check]
+depends = ["check-format", "lint", "tests", "typecheck", "validate"]

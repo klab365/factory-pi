@@ -475,3 +475,227 @@ test("orchestrator routes new visits to their isolated, reusable agent conversat
     expect(calls[2]?.task).toBe("structured feedback");
   });
 });
+
+test("explicit new/resume/refine preserve exact agent conversations and isolate a new run", async () => {
+  const root = mkdtempSync(resolve(tmpdir(), "factory-explicit-"));
+  let journal: DurableJournal | undefined;
+  const open = async (selection: Parameters<typeof openJournal>[4]) => {
+    await journal?.harness.close(BACKGROUND_CONTEXT);
+    journal = await openJournal(root, "pipeline:test", () => ({ goal: "original" }), runtime, selection);
+    return journal;
+  };
+  try {
+    const first = await open({ mode: "new", runId: "first" });
+    const builderId = (await first.agentConversation("builder")).id;
+    const reviewerId = (await first.agentConversation("reviewer")).id;
+    const second = await open({ mode: "new", runId: "second" });
+    expect((await second.agentConversation("builder")).id).not.toBe(builderId);
+    const resumed = await open({ mode: "resume", runId: "first" });
+    expect((await resumed.agentConversation("builder")).id).toBe(builderId);
+    await complete(resumed);
+    const refined = await open({
+      mode: "refine",
+      runId: "first",
+      instruction: "also tests",
+      requestId: "refinement",
+    });
+    expect(refined.round).toBe(2);
+    expect(refined.inputs.goal).toContain("original");
+    expect(refined.inputs.goal).toContain("also tests");
+    expect(refined.cursor).toBeUndefined();
+    expect((await refined.agentConversation("builder")).id).toBe(builderId);
+    expect((await refined.agentConversation("reviewer")).id).toBe(reviewerId);
+    const retry = await open({
+      mode: "refine",
+      runId: "first",
+      instruction: "also tests",
+      requestId: "refinement",
+    });
+    expect(retry.round).toBe(2);
+    const again = await open({ mode: "resume", runId: "first" });
+    expect(again.round).toBe(2);
+    expect((await again.agentConversation("builder")).id).toBe(builderId);
+  } finally {
+    await journal?.harness.close(BACKGROUND_CONTEXT);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test.each([false, true])(
+  "a fresh run never recovers another run's in-flight agent/handoff tasks (legacy root=%s)",
+  async (legacyRoot) => {
+    const { defineTask, defineExtension } = await import("@earendil-works/pi-durable");
+    let attempts = 0;
+    let finish = false;
+    let started!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const child = defineTask<null, { phase: "work" }, null>({
+      name: `test.interrupted-child-${legacyRoot}`,
+      version: 1,
+      initial: () => ({ phase: "work" }),
+      phases: {
+        async work(_task, api, context) {
+          attempts++;
+          started();
+          if (!finish)
+            await new Promise<void>((_resolve, reject) => {
+              api.signal.addEventListener("abort", () => reject(api.signal.reason), { once: true });
+            });
+          await api.commit(
+            () => ({ status: "terminal", outcome: { status: "completed", result: null } }),
+            context,
+          );
+        },
+      },
+      async abort(_task, api, context) {
+        await api.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), context);
+      },
+    });
+    const parent = defineTask<null, { phase: "start" | "finish" }, null>({
+      name: `test.interrupted-parent-${legacyRoot}`,
+      version: 1,
+      initial: () => ({ phase: "start" }),
+      phases: {
+        async start(task, api, context) {
+          await api.commit(async (tx) => {
+            const conversation = await tx.createConversation({
+              ownership: { kind: "task", taskId: task.id },
+            });
+            const childId = await tx.createTask(child, null, {
+              conversationId: conversation.id,
+              ownership: { kind: "conversation" },
+            });
+            return {
+              status: "waiting",
+              checkpoint: { phase: "finish" },
+              on: [childId],
+              policy: "allSettled",
+            };
+          }, context);
+        },
+        async finish(_task, api, context) {
+          await api.commit(
+            () => ({ status: "terminal", outcome: { status: "completed", result: null } }),
+            context,
+          );
+        },
+      },
+      async abort(_task, api, context) {
+        await api.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), context);
+      },
+    });
+    runtime.registry.install(
+      defineExtension({ name: `test.interrupted-${legacyRoot}`, tasks: [parent, child] }),
+    );
+    const root = mkdtempSync(resolve(tmpdir(), "factory-scheduling-"));
+    let journal: DurableJournal | undefined;
+    try {
+      journal = await openJournal(root, "pipeline:test", () => ({}), runtime, {
+        mode: "new",
+        runId: "first",
+      });
+      if (legacyRoot) {
+        await appendEvent(journal.indexConversation, "factory.run", {
+          runId: "legacy",
+          workflow: "pipeline:test",
+          status: "started",
+          inputs: {},
+        });
+        await journal.harness.close(BACKGROUND_CONTEXT);
+        journal = await openJournal(root, "pipeline:test", () => ({}), runtime, {
+          mode: "resume",
+          runId: "legacy",
+        });
+      }
+      const firstId = journal.runId;
+      const runConversationId = journal.conversation.id;
+      const agent = legacyRoot ? journal.conversation : await journal.agentConversation("builder");
+      await turn({ ...journal, conversation: agent }, "builder", "original agent history");
+      const taskId = await agent.commit(
+        (tx) => tx.createTask(parent, null, { ownership: { kind: "conversation" } }),
+        BACKGROUND_CONTEXT,
+      );
+      journal.harness.resume();
+      await ready;
+      // Close interrupts the phase's AbortSignal without terminalizing its durable
+      // work. The parent is waiting on a task in a task-owned handoff conversation.
+      await journal.harness.close(BACKGROUND_CONTEXT);
+      journal = await openJournal(root, "pipeline:test", () => ({}), runtime, {
+        mode: "resume",
+        runId: firstId,
+      });
+      // Queue admission must be scoped too, not only recovery of existing tasks.
+      // A raw queued write is sufficient to test visibility without any provider.
+      const inbox = legacyRoot ? journal.conversation : await journal.agentConversation("builder");
+      const queued = await inbox.commit(
+        (tx) =>
+          tx.createSubmission({
+            type: "write",
+            status: "queued",
+            conversationId: inbox.id,
+            requestId: "queued-old-run",
+          }),
+        BACKGROUND_CONTEXT,
+      );
+      await journal.harness.close(BACKGROUND_CONTEXT);
+      journal = await openJournal(root, "pipeline:test", () => ({}), runtime, {
+        mode: "new",
+        runId: "second",
+      });
+      expect((await journal.harness.inspect(BACKGROUND_CONTEXT)).submissions).toEqual([]);
+      expect(await journal.harness.submission(queued.id, BACKGROUND_CONTEXT)).toBeDefined();
+      journal.harness.resume();
+      await appendEvent(journal.conversation, "test.new-run", {}); // submit() also enables scheduling
+      await journal.harness.waitForIdle(BACKGROUND_CONTEXT);
+      expect(attempts).toBe(1);
+      expect((await journal.harness.inspect(BACKGROUND_CONTEXT)).tasks).toEqual([]);
+      expect((await journal.harness.getTask(taskId, BACKGROUND_CONTEXT))?.state.status).toBe("waiting");
+      await journal.harness.close(BACKGROUND_CONTEXT);
+      finish = true;
+      journal = await openJournal(root, "pipeline:test", () => ({}), runtime, {
+        mode: "resume",
+        runId: firstId,
+      });
+      expect(journal.conversation.id).toBe(runConversationId);
+      const restored = legacyRoot ? journal.conversation : await journal.agentConversation("builder");
+      expect(restored.id).toBe(agent.id);
+      expect((await restored.context(BACKGROUND_CONTEXT)).messages.map((m) => m.content)).toEqual([
+        "original agent history",
+      ]);
+      const result = await journal.harness.waitForTask(taskId, BACKGROUND_CONTEXT);
+      expect(result.state.outcome.status).toBe("completed");
+      expect(attempts).toBe(2);
+      const children = await restored.commit(
+        (tx) => tx.scanConversations({ ownerTaskId: taskId }, 500),
+        BACKGROUND_CONTEXT,
+      );
+      expect(children.items).toHaveLength(1);
+    } finally {
+      finish = true;
+      await journal?.harness.close(BACKGROUND_CONTEXT);
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+  10000,
+);
+
+test("ambiguous interrupted legacy root runs fail closed instead of scheduling both", async () => {
+  await fixture(async (open) => {
+    const journal = await open();
+    for (const runId of ["legacy-one", "legacy-two"]) {
+      await appendEvent(journal.indexConversation, "factory.run", {
+        runId,
+        workflow: "pipeline:legacy",
+        status: "started",
+        inputs: {},
+      });
+    }
+    await journal.harness.close(BACKGROUND_CONTEXT);
+    await expect(open("pipeline:legacy")).rejects.toThrow("Multiple interrupted legacy root runs");
+    // New independent runs must still work even when legacy history is ambiguous.
+    const fresh = await open("pipeline:fresh");
+    expect(fresh.conversation.id).not.toBe(journal.indexConversation.id);
+  });
+});

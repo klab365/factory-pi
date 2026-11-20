@@ -3,6 +3,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { Harness, type Conversation, type Cursor, type ConversationId } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeJsonlStorage } from "@earendil-works/pi-durable/storage/jsonl/node";
+import { scopeRunStorage } from "./run-storage";
 import type { createAgentRuntime } from "./agent-runtime";
 
 type RecordValue = Record<string, unknown>;
@@ -12,10 +13,19 @@ export async function openJournal(
   workflowPath: string,
   requestedInputs: () => Record<string, string>,
   runtime: ReturnType<typeof createAgentRuntime>,
+  selection?: { mode: "new" | "resume" | "refine"; runId?: string; instruction?: string; requestId?: string },
 ) {
   const storage = await openNodeJsonlStorage(resolve(root, ".factory/state/durable"), BACKGROUND_CONTEXT);
+  let scope: Awaited<ReturnType<typeof scopeRunStorage>>;
+  try {
+    scope = await scopeRunStorage(storage, workflowPath, selection);
+  } catch (error) {
+    await storage.close(BACKGROUND_CONTEXT);
+    throw error;
+  }
+  selection = { ...(selection ?? { mode: "new" }), runId: scope.runId };
   const harness = await Harness.open(
-    storage,
+    scope.storage,
     {
       models: runtime.models,
       registry: runtime.registry,
@@ -27,7 +37,13 @@ export async function openJournal(
     const indexConversation = await harness.root(BACKGROUND_CONTEXT);
     const runs = new Map<
       string,
-      { status: string; workflow: string; inputs?: Record<string, string>; conversationId?: ConversationId }
+      {
+        status: string;
+        workflow: string;
+        inputs?: Record<string, string>;
+        conversationId?: ConversationId;
+        requestId?: string;
+      }
     >();
     const completed = new Set<string>();
     const results = new Map<string, RecordValue>();
@@ -45,6 +61,8 @@ export async function openJournal(
           typeof data.workflow === "string"
         ) {
           runs.set(data.runId, {
+            ...runs.get(data.runId),
+            ...(typeof data.requestId === "string" ? { requestId: data.requestId } : {}),
             status: String(data.status),
             workflow: data.workflow,
             ...(typeof data.conversationId === "number"
@@ -58,14 +76,26 @@ export async function openJournal(
       }
       cursor = page.next;
     } while (cursor);
-    const activeRun = [...runs]
-      .reverse()
-      .find(([, run]) => run.workflow === workflowPath && run.status === "started");
+    const activeRun =
+      selection?.mode === "new"
+        ? [...runs].find(([id]) => id === selection.runId)
+        : selection
+          ? [...runs].find(([id, run]) => id === selection.runId && run.workflow === workflowPath)
+          : [...runs].reverse().find(([, run]) => run.workflow === workflowPath && run.status === "started");
+    if (selection && selection.mode !== "new" && !activeRun)
+      throw new Error("Run not found for this pipeline");
+    if (
+      selection?.mode === "refine" &&
+      activeRun?.[1].status !== "completed" &&
+      (!selection.requestId || activeRun?.[1].requestId !== selection.requestId)
+    )
+      throw new Error("Resume the interrupted run before refining");
     let runId = activeRun?.[0];
-    const inputs = activeRun?.[1].inputs ?? requestedInputs();
+    let inputs = activeRun?.[1].inputs ?? requestedInputs();
+    let round = 1;
     let conversation: Conversation;
     if (!runId) {
-      runId = crypto.randomUUID();
+      runId = selection?.runId ?? crypto.randomUUID();
       const newRunId = runId;
       // Creation and the run mapping must survive together, even if the process stops here.
       const conversationId = await indexConversation.commit(async (tx) => {
@@ -83,6 +113,7 @@ export async function openJournal(
         });
         return created.id;
       }, BACKGROUND_CONTEXT);
+      scope.include(conversationId);
       const created = await harness.conversation(conversationId, BACKGROUND_CONTEXT);
       if (!created) throw new Error(`New conversation '${conversationId}' is missing`);
       conversation = created;
@@ -111,6 +142,11 @@ export async function openJournal(
         if (!entry.data || typeof entry.data !== "object") continue;
         const data = entry.data as RecordValue;
         if (data.runId !== runId) continue;
+        if (entry.kind === "factory.round" && typeof data.round === "number") {
+          round = data.round;
+          inputs = data.inputs as Record<string, string>;
+          savedCursor = undefined;
+        }
         if (entry.kind === "factory.agent") {
           if (typeof data.agentName !== "string" || typeof data.conversationId !== "number") {
             throw new Error(`Invalid agent conversation mapping for run '${runId}'`);
@@ -148,6 +184,32 @@ export async function openJournal(
       }
       cursor = page.next;
     } while (cursor);
+    if (
+      selection?.mode === "refine" &&
+      (!selection.requestId || activeRun?.[1].requestId !== selection.requestId)
+    ) {
+      if (!selection.instruction?.trim()) throw new Error("Refine requires an instruction");
+      round++;
+      inputs = {
+        ...inputs,
+        goal: `${inputs.goal ?? ""}\n\nAdditional instruction (round ${round}):\n${selection.instruction}`,
+      };
+      await conversation.commit(async (tx) => {
+        await tx.appendEntry(conversation.id, { kind: "factory.round", data: { runId, round, inputs } });
+        await tx.appendEntry(indexConversation.id, {
+          kind: "factory.run",
+          data: {
+            runId,
+            conversationId: conversation.id,
+            workflow: workflowPath,
+            status: "started",
+            inputs,
+            ...(selection.requestId ? { requestId: selection.requestId } : {}),
+          },
+        });
+      }, BACKGROUND_CONTEXT);
+      savedCursor = undefined;
+    }
     // Resolve every saved ID before resuming work; never replace missing history.
     const agentConversations = new Map<string, Promise<Conversation>>();
     for (const [agentName, id] of agentIds) {
@@ -170,6 +232,7 @@ export async function openJournal(
           });
           return created.id;
         }, BACKGROUND_CONTEXT);
+        scope.include(id);
         const created = await harness.conversation(id, BACKGROUND_CONTEXT);
         if (!created) throw new Error(`New agent conversation '${id}' is missing`);
         return created;
@@ -199,6 +262,7 @@ export async function openJournal(
       completed,
       results,
       runId,
+      round,
       inputs,
       cursor: savedCursor,
     };

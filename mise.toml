@@ -27,3 +27,6 @@ run = "bun run validate"
 
 [tasks.check]
 depends = ["check-format", "lint", "tests", "typecheck", "validate"]
+
+[tasks.dev-pi]
+run = "bun run src/pi-test.ts"

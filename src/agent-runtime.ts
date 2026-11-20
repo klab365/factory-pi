@@ -259,7 +259,13 @@ export function createAgentRuntime(root: string, pipeline: RecordValue): AgentRu
     models,
     agentChange: changeFor,
     async runAgent(conversation, agentName, task, requestId) {
-      await conversation.configure(changeFor(agentName), BACKGROUND_CONTEXT);
+      const previous = await conversation.commit(
+        (tx) => tx.submissionByRequest(conversation.id, requestId),
+        BACKGROUND_CONTEXT,
+      );
+      // Do not reconfigure an admitted turn: it can still be running, with its
+      // original handoff children, or already answered but not checkpointed yet.
+      if (!previous) await conversation.configure(changeFor(agentName), BACKGROUND_CONTEXT);
       const submission = await conversation.submit(
         { type: "input", content: task, requestId },
         BACKGROUND_CONTEXT,

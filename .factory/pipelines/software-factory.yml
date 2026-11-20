@@ -32,4 +32,5 @@ steps:
       Focus on the requested goal: ${{ inputs.goal }}.
       Run `mise run check` and report its result.
       Report actionable findings with file and line references. Do not modify files.
-      Return status `approved` when clean, otherwise `changes_requested` and put actionable fixes in `feedback`.
+      Return status `approved` when clean, otherwise `changes_requested`
+      and put actionable fixes in `feedback`.

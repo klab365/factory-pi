@@ -38,7 +38,7 @@ function factoryFile(folder: string, name: string, extension: string): string {
 type DurableJournal = Awaited<ReturnType<typeof openJournal>>;
 async function openJournal(
   workflowPath: string,
-  requestedInputs: Record<string, string>,
+  requestedInputs: () => Record<string, string>,
   runtime: ReturnType<typeof createAgentRuntime>,
 ) {
   const storage = await openNodeJsonlStorage(resolve(root, ".factory/state/durable"), BACKGROUND_CONTEXT);
@@ -82,7 +82,13 @@ async function openJournal(
     .reverse()
     .find(([, run]) => run.workflow === workflowPath && run.status === "started");
   let runId = activeRun?.[0];
-  const inputs = activeRun?.[1].inputs ?? requestedInputs;
+  let inputs: Record<string, string>;
+  try {
+    inputs = activeRun?.[1].inputs ?? requestedInputs();
+  } catch (error) {
+    await harness.close(BACKGROUND_CONTEXT);
+    throw error;
+  }
   if (!runId) {
     runId = crypto.randomUUID();
     await appendEvent(conversation, "factory.run", {
@@ -279,7 +285,7 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-function collectInputs(pipeline: RecordValue, args: string[]): Record<string, string> {
+function collectInputs(pipeline: RecordValue, args: string[], requireValues = true): Record<string, string> {
   const definitions = pipeline.inputs === undefined ? {} : object(pipeline.inputs, "Pipeline inputs");
   const supplied: Record<string, string> = {};
   for (let i = 0; i < args.length; i++) {
@@ -293,11 +299,14 @@ function collectInputs(pipeline: RecordValue, args: string[]): Record<string, st
     supplied[key] = value;
   }
 
+  if (!requireValues) return supplied;
+
   const values: Record<string, string> = {};
   for (const [name, raw] of Object.entries(definitions)) {
     const definition = object(raw, `Input '${name}'`);
     let value = supplied[name] ?? (definition.default === undefined ? undefined : String(definition.default));
     const required = definition.required !== false;
+    if (!required && value === undefined) continue;
     const choices = Array.isArray(definition.options) ? definition.options.map(String) : undefined;
     while (value === undefined || (required && !value.trim())) {
       if (!process.stdin.isTTY) fail(`Missing required input '${name}'. Pass --${name}=<value>`);
@@ -333,10 +342,11 @@ function interpolate(
 
 async function runPipeline(name: string, args: string[]): Promise<void> {
   const pipeline = loadYaml(factoryFile("pipelines", name, "yml"));
-  const requestedInputs = collectInputs(pipeline, args);
+  validatePipeline(name, false);
+  collectInputs(pipeline, args, false);
   const runtime = createAgentRuntime(root, pipeline);
   const workflowPath = `pipeline:${name}`;
-  const journal = await openJournal(workflowPath, requestedInputs, runtime);
+  const journal = await openJournal(workflowPath, () => collectInputs(pipeline, args), runtime);
   const inputs = journal.inputs;
   journal.harness.resume();
   try {
@@ -353,7 +363,7 @@ async function runPipeline(name: string, args: string[]): Promise<void> {
   }
 }
 
-function validatePipeline(name: string): void {
+function validatePipeline(name: string, announce = true): void {
   const pipeline = loadYaml(factoryFile("pipelines", name, "yml"));
   const definitions = pipeline.inputs === undefined ? {} : object(pipeline.inputs, "Pipeline inputs");
   for (const [inputName, raw] of Object.entries(definitions)) {
@@ -372,8 +382,12 @@ function validatePipeline(name: string): void {
     const id = string(step.id, `Pipeline '${name}' step ${index + 1} id`);
     if (ids.has(id)) fail(`Pipeline '${name}' has duplicate step id '${id}'`);
     ids.add(id);
-    if (typeof step.run === "string") continue;
-    if (typeof step.agent === "string") {
+    if ((step.run !== undefined) === (step.agent !== undefined)) {
+      fail(`Pipeline step '${id}' must define exactly one of 'run' or 'agent'`);
+    }
+    if (step.run !== undefined) {
+      string(step.run, `Pipeline step '${id}' run`);
+    } else if (typeof step.agent === "string") {
       loadAgentDefinition(root, step.agent);
       string(step.task, `Pipeline '${name}' step ${index + 1} task`);
     } else fail(`Pipeline '${name}' step ${index + 1} needs 'run' or 'agent'`);
@@ -392,7 +406,7 @@ function validatePipeline(name: string): void {
       }
     }
   }
-  console.log(`✓ Pipeline valid: ${name}`);
+  if (announce) console.log(`✓ Pipeline valid: ${name}`);
 }
 
 const [command, target, ...args] = Bun.argv.slice(2);

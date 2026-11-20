@@ -215,7 +215,8 @@ export function createAgentRuntime(root: string, pipeline: RecordValue): AgentRu
                   : [],
               )
               .join("\n") ?? "";
-          return { output: [{ type: "text", text: text || `Agent '${target}' completed the handoff.` }] };
+          parseOutcome(target, text);
+          return { output: [{ type: "text", text }] };
         },
       });
       edgeExtensions.set(
@@ -227,6 +228,26 @@ export function createAgentRuntime(root: string, pipeline: RecordValue): AgentRu
       );
     }
   }
+
+  const parseOutcome = (agentName: string, text: string): AgentOutcome => {
+    const match = text.match(/<factory-result>\s*([\s\S]*?)\s*<\/factory-result>\s*$/);
+    if (!match) throw new Error(`Agent '${agentName}' did not return a <factory-result> block`);
+    const result: unknown = JSON.parse(match[1]);
+    if (
+      !result ||
+      typeof result !== "object" ||
+      Array.isArray(result) ||
+      typeof (result as RecordValue).status !== "string"
+    ) {
+      throw new Error(`Agent '${agentName}' returned an invalid factory result`);
+    }
+    if (!(outcomes.get(agentName) ?? new Set(["completed"])).has((result as RecordValue).status as string)) {
+      throw new Error(
+        `Agent '${agentName}' returned undeclared status '${String((result as RecordValue).status)}'`,
+      );
+    }
+    return result as AgentOutcome;
+  };
 
   const registry = createRegistry();
   registry.install(CodingTools);
@@ -263,25 +284,7 @@ export function createAgentRuntime(root: string, pipeline: RecordValue): AgentRu
               : [],
           )
           .join("\n") ?? "";
-      const match = text.match(/<factory-result>\s*([\s\S]*?)\s*<\/factory-result>\s*$/);
-      if (!match) throw new Error(`Agent '${agentName}' did not return a <factory-result> block`);
-      const result: unknown = JSON.parse(match[1]);
-      if (
-        !result ||
-        typeof result !== "object" ||
-        Array.isArray(result) ||
-        typeof (result as RecordValue).status !== "string"
-      ) {
-        throw new Error(`Agent '${agentName}' returned an invalid factory result`);
-      }
-      if (
-        !(outcomes.get(agentName) ?? new Set(["completed"])).has((result as RecordValue).status as string)
-      ) {
-        throw new Error(
-          `Agent '${agentName}' returned undeclared status '${String((result as RecordValue).status)}'`,
-        );
-      }
-      return result as AgentOutcome;
+      return parseOutcome(agentName, text);
     },
   };
 }

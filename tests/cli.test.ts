@@ -64,6 +64,26 @@ describe("factory CLI", () => {
     });
   });
 
+  test("validates selected skills before any shell step or journal creation", () => {
+    fixture(
+      "steps:\n  - id: shell\n    run: touch unwanted\n  - id: build\n    agent: builder\n    task: Build\n",
+      (root) => {
+        mkdirSync(`${root}/.factory/agents`, { recursive: true });
+        writeFileSync(
+          `${root}/.factory/agents/builder.md`,
+          "---\nname: builder\nskills: [missing]\n---\nImplement\n",
+        );
+        for (const command of ["validate", "run"]) {
+          const result = runCli(root, command, "test");
+          expect(result.exitCode).toBe(1);
+          expect(result.output).toContain("cannot load 'missing'");
+          expect(existsSync(`${root}/unwanted`)).toBe(false);
+          expect(existsSync(`${root}/.factory/state`)).toBe(false);
+        }
+      },
+    );
+  });
+
   test("routes shell outcomes and preserves maxVisits across resume", () => {
     fixture(
       `steps:

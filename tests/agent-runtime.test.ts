@@ -3,9 +3,34 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { readFileSync } from "node:fs";
 import { describe, expect, test } from "bun:test";
 import { parse } from "yaml";
-import { createAgentRuntime } from "../src/agent-runtime";
+import { createAgentRuntime, loadAgentDefinition } from "../src/agent-runtime";
 
 describe("durable agent transitions", () => {
+  test("loads the repository workflow skills only for their configured agents", () => {
+    const root = `${import.meta.dir}/..`;
+    const pipeline = parse(readFileSync(`${root}/.factory/pipelines/software-factory.yml`, "utf8"));
+    const runtime = createAgentRuntime(root, pipeline);
+    const expected = {
+      builder: ["typescript-expert", "systematic-debugging", "verification-before-completion"],
+      reviewer: ["code-review", "verification-before-completion"],
+    };
+    for (const [agent, names] of Object.entries(expected)) {
+      const definition = loadAgentDefinition(root, agent);
+      expect(definition.skills.map((skill) => skill.name)).toEqual(names);
+      const instructions = runtime.agentChange(agent).instructions ?? "";
+      let previous = -1;
+      for (const skill of definition.skills) {
+        const position = instructions.indexOf(`## Skill: ${skill.name}\n`);
+        expect(position).toBeGreaterThan(previous);
+        expect(instructions).toContain(skill.content);
+        previous = position;
+      }
+      expect(instructions.includes("## Skill: systematic-debugging\n")).toBe(agent === "builder");
+      expect(instructions.includes("## Skill: typescript-expert\n")).toBe(agent === "builder");
+      expect(instructions.includes("## Skill: code-review\n")).toBe(agent === "reviewer");
+    }
+  });
+
   test("exposes handoff tools only for transitions declared in YAML", () => {
     const root = `${import.meta.dir}/..`;
     const pipeline = parse(readFileSync(`${root}/.factory/pipelines/software-factory.yml`, "utf8"));

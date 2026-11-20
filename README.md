@@ -6,10 +6,13 @@ Pipelines liegen unter `.factory/pipelines/` und enthalten Shell-Schritte (`run`
 
 ```sh
 mise install
-bun install
 ```
 
 Der Agent-Provider muss in Pis `auth.json` eingerichtet sein (standardmäßig `~/.pi/agent/auth.json`; `PI_CODING_AGENT_DIR` kann den Pfad ändern). Der Durable-Runner liest und aktualisiert diese Credentials. Shell-Schritte führen YAML-Kommandos mit `bash -lc` im Projektverzeichnis aus – Pipelines daher nur aus vertrauenswürdigen Quellen aus.
+
+## CI
+
+Der Workflow `.github/workflows/ci.yml` führt bei Pull Requests und Pushes auf `main` die lokalen Checks mit `mise run check` aus. `mise install` installiert die in `mise.toml` festgelegte Bun-Version und führt den `postinstall`-Hook aus, der Dependencies via `bun install --frozen-lockfile` aus `bun.lock` installiert. Bei Dependency-Updates `bun install` ausführen und die aktualisierte `bun.lock` mit einchecken.
 
 ## Verwenden
 

@@ -3,6 +3,10 @@ name: builder
 description: Implement a requested change in the current repository
 model: openai-codex/gpt-6.1-sol
 thinking: medium
+skills:
+  - typescript-expert
+  - systematic-debugging
+  - verification-before-completion
 tools:
   - read
   - bash

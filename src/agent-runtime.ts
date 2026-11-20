@@ -15,6 +15,7 @@ import {
 import type { AgentChange, Conversation, Extension, ToolRegistration } from "@earendil-works/pi-durable";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { PiCredentialStore } from "./pi-credentials";
+import { loadSkills, skillInstructions, type SkillDefinition } from "./skills";
 
 type RecordValue = Record<string, unknown>;
 export type AgentDefinition = {
@@ -23,6 +24,7 @@ export type AgentDefinition = {
   model?: string;
   thinking?: string;
   tools?: string[];
+  skills: SkillDefinition[];
   prompt: string;
 };
 export type AgentOutcome = RecordValue & { status: string; summary?: string; feedback?: string };
@@ -74,6 +76,7 @@ export function loadAgentDefinition(root: string, name: string): AgentDefinition
   }
   return {
     name,
+    skills: loadSkills(root, name, fields.skills),
     ...(typeof fields.description === "string" ? { description: fields.description } : {}),
     ...(typeof fields.model === "string" ? { model: fields.model } : {}),
     ...(typeof fields.thinking === "string" ? { thinking: fields.thinking } : {}),
@@ -159,7 +162,7 @@ export function createAgentRuntime(root: string, pipeline: RecordValue): AgentRu
       extensions,
       tools: selectedTools,
       modelTools: selectedTools,
-      instructions: `${agent.prompt}\n\nDelegate only through enabled handoff tools; the pipeline controls allowed transitions. End every turn with a <factory-result> JSON block. Its status must be one of: ${validStatuses.join(", ")}. Include a concise summary, and include actionable feedback when requesting changes. Example shape: <factory-result>{"status":"${validStatuses[0]}","summary":"...","feedback":"..."}</factory-result>`,
+      instructions: `${[agent.prompt, skillInstructions(agent.skills)].filter(Boolean).join("\n\n")}\n\nDelegate only through enabled handoff tools; the pipeline controls allowed transitions. End every turn with a <factory-result> JSON block. Its status must be one of: ${validStatuses.join(", ")}. Include a concise summary, and include actionable feedback when requesting changes. Example shape: <factory-result>{"status":"${validStatuses[0]}","summary":"...","feedback":"..."}</factory-result>`,
       cwd: root,
       maxTurns: 80,
     };

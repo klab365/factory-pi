@@ -3,6 +3,9 @@ name: reviewer
 description: Review code
 model: openai-codex/gpt-6.1-sol
 thinking: medium
+skills:
+  - code-review
+  - verification-before-completion
 tools:
   - read
   - bash

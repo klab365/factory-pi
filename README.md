@@ -1,6 +1,6 @@
 # Pi Software Factory (prototype)
 
-Pipelines liegen unter `.factory/pipelines/` und enthalten Shell-Schritte (`run`) oder Pi-Durable-Agent-Schritte (`agent` + `task`). Agent-Instruktionen liegen unter `.factory/agents/` als Markdown mit YAML-Frontmatter (`name`, `description`, `model`, `thinking`, `tools`). Agents laufen als Conversations im pi-durable-Harness und verwenden die Coding-Tools des Harness.
+Pipelines liegen unter `.factory/pipelines/` und enthalten Shell-Schritte (`run`) oder Pi-Durable-Agent-Schritte (`agent` + `task`). Agent-Instruktionen liegen unter `.factory/agents/` als Markdown mit YAML-Frontmatter (`name`, `description`, `model`, `thinking`, `tools`, optional `skills`). Agents laufen als Conversations im pi-durable-Harness und verwenden die Coding-Tools des Harness.
 
 ## Voraussetzungen
 
@@ -95,3 +95,80 @@ Teststarts sie fortsetzen können. Das temporäre Verzeichnis wird beim Beenden 
 Dies isoliert die **Pi-Konfiguration**, nicht das Arbeitsverzeichnis: die Factory darf
 weiterhin Projektdateien bearbeiten und YAML-Kommandos ausführen. Nicht mehrere
 Factory-Pi-Prozesse gleichzeitig im selben Repository betreiben.
+
+## Agent-Skills
+
+Agents wählen wiederverwendbare Anweisungen explizit im YAML-Frontmatter:
+
+```yaml
+---
+name: builder
+skills:
+  - typescript-expert
+# alternativ: skills: [typescript-expert]
+---
+Agent-spezifische Anweisungen …
+```
+
+Ein Name wird ausschließlich relativ zum Projektverzeichnis als
+`.agents/skills/<name>/SKILL.md` aufgelöst. Es gibt keine globale Suche, keinen
+Fallback, keine automatischen Skills und keine Pfad-/URL-Referenzen. Namen bestehen
+aus kleingeschriebenen ASCII-Buchstaben/Ziffern mit einzelnen Bindestrichen zwischen
+Segmenten (maximal 64 Zeichen). Symlinks dürfen nicht aus dem Projekt herausführen.
+Fehlendes `skills` oder `skills: []` lädt nichts; `null`, andere Feldtypen,
+ungültige Namen und doppelte Referenzen sind Fehler.
+
+Jede `SKILL.md` benötigt YAML-Frontmatter mit `name` (identisch zum Verzeichnisnamen)
+und einer nicht leeren `description` sowie einen nicht leeren Markdown-Anweisungstext:
+
+```markdown
+---
+name: typescript-expert
+description: Sichere TypeScript-Implementierung und Tests
+---
+Prüfe externe Eingaben vor ihrer Verwendung.
+```
+
+`validate` und der Run-Preflight prüfen alle referenzierten Skills aller
+Pipeline-Agents, bevor ein Journal geöffnet oder ein Schritt ausgeführt wird.
+Nicht ausgewählte Skills werden weder gelesen noch validiert. Der Runner hängt
+nur die ausgewählten Anweisungstexte in Listenreihenfolge mit Name, Beschreibung
+und projektrelativem Quellpfad an die Agent-Instruktionen an, vor dem Factory-
+Ergebnisprotokoll. Weitere Dateien/Links in Skills werden nicht automatisch geladen.
+Skills erteilen keine Tools oder Handoff-Rechte und sind wie Agent-Instruktionen
+vertrauenswürdige Projektkonfiguration, keine Sandbox.
+
+Die Definitionen werden pro Runtime geladen, ohne globale Skill-Caches oder
+zusätzliche History-Nachrichten. Normale Agent-Aufrufe und neue Handoff-Children
+verwenden dieselbe agentenspezifische Konfiguration; die bestehende Trennung der
+Agent-/Run-Conversations bleibt erhalten. Bereits zugelassene Requests werden beim
+Replay nicht neu konfiguriert; neue Aufrufe verwenden die aktuell geladenen Skills.
+Die aktuellen Dateien müssen auch beim Resume den Preflight bestehen.
+
+### Mitgelieferte Skills und Quellen
+
+| Skill | Agent | Zweck |
+| --- | --- | --- |
+| `typescript-expert` | Builder | Sichere TypeScript-Implementierung und deterministische Bun-Tests |
+| `systematic-debugging` | Builder | Reproduktion, Ursachenanalyse und gezielte Regressionstests bei Fehlern |
+| `code-review` | Reviewer | Konkrete Korrektheits-, Sicherheits- und Regressionsprüfung |
+| `verification-before-completion` | Builder, Reviewer | Aktuelle Prüfergebnisse statt unbelegter Abschlussbehauptungen |
+
+Die beiden zusätzlichen Workflow-Skills wurden nach Web-Recherche gezielt ausgewählt:
+Fehlersuche ist bei CLI-/Prozess-/Journal-Grenzen besonders hilfreich; belastbare
+Abschlussprüfungen werden sowohl bei Implementierung als auch Review benötigt.
+Als Referenzen wurden die vollständigen Skills
+[Systematic Debugging](https://github.com/obra/superpowers/blob/22f0b463e7a5e579904dd6211a520321035526f7/skills/systematic-debugging/SKILL.md)
+und [Verification Before Completion](https://github.com/obra/superpowers/blob/22f0b463e7a5e579904dd6211a520321035526f7/skills/verification-before-completion/SKILL.md)
+aus `obra/superpowers` gelesen. Die lokalen Texte sind eigenständig formulierte,
+kompakte Factory-spezifische Checklisten, keine unveränderten Imports. Sie setzen
+keine externen Skill-Loader, Zusatzdateien oder Superpowers-Tools voraus und
+respektieren Read-only-Review, History-Isolation und die bestehenden Pipeline-Status.
+Es werden keine entfernten Inhalte zur Laufzeit geladen.
+
+Auch die bisherigen Texte sind eigenständig für Bun/Factory geschrieben. Als recherchierte Beispiele
+für Skill-Struktur und fokussierte Checklisten dienten
+[JavaScript/TypeScript Jest](https://github.com/github/awesome-copilot/blob/main/skills/javascript-typescript-jest/SKILL.md)
+und [PostgreSQL Code Review](https://github.com/github/awesome-copilot/blob/main/skills/postgresql-code-review/SKILL.md)
+aus GitHubs Awesome Copilot; deren framework-/datenbankspezifische Anweisungen werden
+hier nicht übernommen.

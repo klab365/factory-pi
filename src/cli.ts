@@ -4,9 +4,7 @@ import { resolve, isAbsolute, relative, sep } from "node:path";
 import { parse } from "yaml";
 import { createAgentRuntime, loadAgentDefinition } from "./agent-runtime";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { Harness, type Conversation, type Cursor } from "@earendil-works/pi-durable";
-import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
-import { openNodeJsonlStorage } from "@earendil-works/pi-durable/storage/jsonl/node";
+import { openJournal, appendEvent, type DurableJournal } from "./journal";
 
 type RecordValue = Record<string, unknown>;
 const root = process.cwd();
@@ -33,116 +31,6 @@ function factoryFile(folder: string, name: string, extension: string): string {
     fail(`Invalid ${folder.slice(0, -1)} name: ${name}`);
   }
   return path;
-}
-
-type DurableJournal = Awaited<ReturnType<typeof openJournal>>;
-async function openJournal(
-  workflowPath: string,
-  requestedInputs: () => Record<string, string>,
-  runtime: ReturnType<typeof createAgentRuntime>,
-) {
-  const storage = await openNodeJsonlStorage(resolve(root, ".factory/state/durable"), BACKGROUND_CONTEXT);
-  const harness = await Harness.open(
-    storage,
-    {
-      models: runtime.models,
-      registry: runtime.registry,
-      env: ({ cwd }) => new NodeExecutionEnv({ cwd: cwd ?? root }),
-    },
-    BACKGROUND_CONTEXT,
-  );
-  const conversation = await harness.root(BACKGROUND_CONTEXT);
-  const runs = new Map<string, { status: string; workflow: string; inputs?: Record<string, string> }>();
-  const completed = new Set<string>();
-  const results = new Map<string, RecordValue>();
-  let savedCursor: { stepId: string; visit: number; visits: Record<string, number> } | undefined;
-  let cursor: Cursor | undefined;
-  do {
-    const page = await conversation.entries({ order: "ascending" }, 500, cursor, BACKGROUND_CONTEXT);
-    for (const entry of page.items) {
-      if (!entry.data || typeof entry.data !== "object") continue;
-      const data = entry.data as RecordValue;
-      if (
-        entry.kind === "factory.run" &&
-        typeof data.runId === "string" &&
-        typeof data.workflow === "string"
-      ) {
-        runs.set(data.runId, {
-          status: String(data.status),
-          workflow: data.workflow,
-          ...(data.inputs && typeof data.inputs === "object"
-            ? { inputs: data.inputs as Record<string, string> }
-            : {}),
-        });
-      }
-    }
-    cursor = page.next;
-  } while (cursor);
-  const activeRun = [...runs]
-    .reverse()
-    .find(([, run]) => run.workflow === workflowPath && run.status === "started");
-  let runId = activeRun?.[0];
-  let inputs: Record<string, string>;
-  try {
-    inputs = activeRun?.[1].inputs ?? requestedInputs();
-  } catch (error) {
-    await harness.close(BACKGROUND_CONTEXT);
-    throw error;
-  }
-  if (!runId) {
-    runId = crypto.randomUUID();
-    await appendEvent(conversation, "factory.run", {
-      runId,
-      workflow: workflowPath,
-      status: "started",
-      inputs,
-    });
-  } else {
-    console.log("↻ Resuming durable run; using its saved inputs");
-  }
-  cursor = undefined;
-  do {
-    const page = await conversation.entries({ order: "ascending" }, 500, cursor, BACKGROUND_CONTEXT);
-    for (const entry of page.items) {
-      if (!entry.data || typeof entry.data !== "object") continue;
-      const data = entry.data as RecordValue;
-      if (data.runId !== runId) continue;
-      if (entry.kind === "factory.step" && typeof data.key === "string") {
-        if (data.status === "completed") {
-          completed.add(data.key);
-          if (data.result && typeof data.result === "object" && !Array.isArray(data.result)) {
-            results.set(data.key, data.result as RecordValue);
-          }
-        } else {
-          completed.delete(data.key);
-          results.delete(data.key);
-        }
-      }
-      if (
-        entry.kind === "factory.cursor" &&
-        typeof data.stepId === "string" &&
-        typeof data.visit === "number" &&
-        data.visits &&
-        typeof data.visits === "object"
-      ) {
-        savedCursor = {
-          stepId: data.stepId,
-          visit: data.visit,
-          visits: data.visits as Record<string, number>,
-        };
-      }
-    }
-    cursor = page.next;
-  } while (cursor);
-  return { harness, conversation, completed, results, runId, inputs, cursor: savedCursor };
-}
-
-async function appendEvent(conversation: Conversation, kind: string, data: RecordValue): Promise<void> {
-  const submission = await conversation.submit(
-    { type: "write", entry: { kind, data: { ...data, at: new Date().toISOString() } } },
-    BACKGROUND_CONTEXT,
-  );
-  await submission.wait(BACKGROUND_CONTEXT);
 }
 
 async function recordStep(
@@ -195,7 +83,6 @@ async function executePipeline(
   jobName: string,
   journal: DurableJournal,
   inputs: Record<string, string>,
-  runtime: ReturnType<typeof createAgentRuntime>,
 ): Promise<void> {
   const pipeline = loadYaml(factoryFile("pipelines", name, "yml"));
   if (!Array.isArray(pipeline.steps)) fail(`Pipeline '${name}' must define a steps array`);
@@ -240,7 +127,7 @@ async function executePipeline(
           const task = interpolate(string(step.task, `Step '${label}' task`), inputs, false, stepResults);
           console.log(`\n▶ ${label} (${step.agent}, visit ${visit})`);
           const requestId = `factory-${journal.runId}-${stepId}-${visit}`;
-          result = await runtime.runAgent(journal.conversation, step.agent, task, requestId);
+          result = await journal.runAgent(step.agent, task, requestId);
         } else {
           throw new Error(`Step '${label}' must define either 'run' or 'agent'`);
         }
@@ -346,14 +233,15 @@ async function runPipeline(name: string, args: string[]): Promise<void> {
   collectInputs(pipeline, args, false);
   const runtime = createAgentRuntime(root, pipeline);
   const workflowPath = `pipeline:${name}`;
-  const journal = await openJournal(workflowPath, () => collectInputs(pipeline, args), runtime);
+  const journal = await openJournal(root, workflowPath, () => collectInputs(pipeline, args), runtime);
   const inputs = journal.inputs;
   journal.harness.resume();
   try {
     console.log(`━━ Pipeline: ${name} ━━`);
-    await executePipeline(name, workflowPath, name, journal, inputs, runtime);
+    await executePipeline(name, workflowPath, name, journal, inputs);
     console.log("\n✓ Factory pipeline completed");
-    await appendEvent(journal.conversation, "factory.run", {
+    await appendEvent(journal.indexConversation, "factory.run", {
+      conversationId: journal.conversation.id,
       runId: journal.runId,
       workflow: workflowPath,
       status: "completed",

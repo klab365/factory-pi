@@ -32,3 +32,66 @@ Die Mise-Tasks `format`, `check-format`, `lint`, `tests`, `typecheck`, `validate
 Pipelines definieren ihre Felder unter `inputs:`. Pflichtfelder werden interaktiv abgefragt; nicht-interaktive Aufrufe können sie mit `--feld=value` übergeben. In `run`- und `task`-Texten werden Werte mit `${{ inputs.feld }}` eingesetzt. Beispiel: `.factory/pipelines/software-factory.yml` verwendet `inputs.goal`; Agent-Instruktionen liegen unter `.factory/agents/`.
 
 Zusätzlich zu diesen statusgesteuerten Pipeline-Übergängen können Agents andere Agents direkt über pi-durable-Handoff-Tools beauftragen. Die erlaubten Ziele leiten sich aus `transitions` ab; nicht deklarierte Handoffs sind nicht als Tool verfügbar. Jeder Handoff läuft als Child-Conversation/Task und wird im JSONL-Journal unter `.factory/state/durable` persistiert.
+
+## Factory in Pi
+
+```sh
+# Isoliertes Pi mit Factory-Extension (keine Änderung an ~/.pi/agent):
+mise run dev-pi
+# Lade-Smoke-Test ohne Modellaufruf:
+mise run dev-pi -- --smoke
+# Alternativ in normalem Pi explizit laden:
+pi -e ./src/pi-extension.ts
+```
+
+In Pi:
+
+- `/factory` oder `/factory run`: YAML-Pipeline auswählen und Inputs abfragen.
+- `/factory run software-factory`: Pipeline direkt wählen; `goal` öffnet einen
+  mehrzeiligen Editor. Esc bricht die Eingabe ab; Flags sind nicht erforderlich.
+- `/factory resume [runId]`: unterbrochenen Lauf mit gespeicherten Inputs und exakt
+  denselben Durable-Agent-Conversations fortsetzen. Ohne ID erscheint eine Auswahl
+  unterbrochener Läufe; bei leerer Auswahl eine Fehlermeldung.
+- `/factory refine [runId]`: abgeschlossenen Lauf auswählen, Zusatzanweisung im Editor
+  eingeben und eine weitere Runde derselben Pipeline/Agent-Conversations starten.
+  Visit-Limits gelten pro Runde. Unterbrochene Runden zuerst mit `resume` fortsetzen.
+- Jedes neue `run` erzeugt eine unabhängige benannte Pi-Session und neue
+  Builder-/Reviewer-Conversations, auch wenn ein anderer Lauf unterbrochen ist.
+
+Die echte menschliche Ziel-Eingabe wird als User-Nachricht gespeichert (dadurch legt
+Pi die Session-Datei an). Ein expliziter Kickoff über `pi.sendUserMessage` startet
+einen echten Agent-Turn, der das registrierte Tool `factory_run` aufruft. Damit sehen
+Session-Monitore aktive Agent-/Tool-Arbeit. Das Tool prüft Run-, Request- und native
+Session-Zuordnung und streamt Fortschritt über `onUpdate`; gerenderte Custom-Entries
+und Footer-Status bleiben zusätzlich erhalten. Die Timeline bleibt beim Wiederöffnen
+sichtbar. Resume und Refine verwenden denselben Weg; Abbruch beendet den Prozessbaum
+und lässt den ausstehenden Request für Resume gespeichert. Der Kickoff benötigt das
+in Pi gewählte Modell (die Integrationstests verwenden einen lokalen Test-Provider). `.factory/state/pi-runs.json` ordnet
+Run-IDs ihren Pi-Sessions zu; die Ausführung und ihre Checkpoints bleiben im vorhandenen
+Durable-Journal. Vor dem Öffnen des Harness wird der Scheduler auf die ausgewählte
+Run-Conversation, ihre gespeicherten Agent-Conversations und deren transitive
+Handoff-Conversations eingeschränkt. Sowohl die Wiederaufnahme lebender Tasks als
+auch die Zulassung wartender Inputs bleibt auf diesen Baum begrenzt; ein neuer Lauf
+aktiviert keine unterbrochenen Tasks anderer Läufe im gemeinsamen Journal. Gespeicherte
+IDs und Historien werden dabei nicht migriert oder ersetzt. Alte Root-Läufe bleiben
+fortsetzbar; sind mehrere unterbrochene Legacy-Läufe derselben Root-Conversation
+zugeordnet, wird die mehrdeutige Auswahl aus Sicherheitsgründen abgelehnt, statt
+möglicherweise fremde Tasks zu starten. Neue unabhängige Läufe bleiben möglich.
+
+Die Extension startet die bestehende CLI in einem Bun-Child-Prozess
+mit JSON über stdin und JSONL-Events über stdout, ohne Shell-Interpolation von
+Benutzereingaben. Shell-Schritte in vertrauenswürdigen YAML-Dateien bleiben ausführbar.
+Während eines aktiven Laufs ist ein Sessionwechsel gesperrt; Pi-Shutdown beendet den
+Runner unter POSIX in einer eigenen Prozessgruppe: zuerst SIGTERM, nach 300 ms
+SIGKILL auch für verbleibende Nachkommen. Shutdown wartet auf diese Bereinigung;
+dasselbe gilt bei Fehlern in der Event-Verarbeitung. Nach Prozessabbruch `resume` verwenden.
+
+`dev-pi` verwendet ein temporäres Agent-Verzeichnis, eine Kopie von `auth.json` und
+nur die explizite Factory-Extension; normale Extensions, MCP, Skills, Prompts, Themes
+und projektlokale Konfiguration werden nicht geladen. OAuth-Updates betreffen nur die
+Kopie. Der Smoke-Test kopiert keine Credentials und prüft per RPC `get_commands`, dass
+`/factory` geladen ist; er sendet keinen Prompt und macht keinen Modellaufruf. Sessions liegen dauerhaft unter `.factory/state/pi-sessions`, damit spätere
+Teststarts sie fortsetzen können. Das temporäre Verzeichnis wird beim Beenden gelöscht.
+Dies isoliert die **Pi-Konfiguration**, nicht das Arbeitsverzeichnis: die Factory darf
+weiterhin Projektdateien bearbeiten und YAML-Kommandos ausführen. Nicht mehrere
+Factory-Pi-Prozesse gleichzeitig im selben Repository betreiben.

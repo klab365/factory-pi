@@ -1,36 +1,21 @@
 #!/usr/bin/env bun
-import { existsSync, readFileSync } from "node:fs";
-import { resolve, isAbsolute, relative, sep } from "node:path";
-import { parse } from "yaml";
 import { createAgentRuntime, loadAgentDefinition } from "./agent-runtime";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { openJournal, appendEvent, type DurableJournal } from "./journal";
 
-type RecordValue = Record<string, unknown>;
+import {
+  type RecordValue,
+  fail,
+  object,
+  string,
+  loadYaml,
+  factoryFile,
+  collectInputs,
+} from "./pipeline-inputs";
 const root = process.cwd();
-const fail = (message: string): never => {
-  throw new Error(message);
-};
-const object = (value: unknown, label: string): RecordValue => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) fail(`${label} must be a mapping`);
-  return value as RecordValue;
-};
-const string = (value: unknown, label: string): string => {
-  if (typeof value !== "string" || !value.trim()) fail(`${label} must be a non-empty string`);
-  return value as string;
-};
-
-function loadYaml(path: string): RecordValue {
-  if (!existsSync(path)) fail(`File not found: ${relative(root, path)}`);
-  return object(parse(readFileSync(path, "utf8")), relative(root, path));
-}
-function factoryFile(folder: string, name: string, extension: string): string {
-  const path = resolve(root, ".factory", folder, `${name}.${extension}`);
-  const fromFactory = relative(resolve(root, ".factory", folder), path);
-  if (isAbsolute(fromFactory) || fromFactory === ".." || fromFactory.startsWith(`..${sep}`)) {
-    fail(`Invalid ${folder.slice(0, -1)} name: ${name}`);
-  }
-  return path;
+let eventSink: ((event: RecordValue) => void) | undefined;
+function emit(type: string, data: RecordValue) {
+  eventSink?.({ type, ...data });
 }
 
 async function recordStep(
@@ -49,6 +34,7 @@ async function recordStep(
     status,
     ...(result === undefined ? {} : { result }),
   });
+  emit("step", { runId: journal.runId, stepId, visit, status, result });
   if (status === "completed") {
     journal.completed.add(key);
     if (result) journal.results.set(key, result);
@@ -62,10 +48,13 @@ async function runCommand(command: string, label: string): Promise<void> {
   console.log(`\n▶ ${label}: ${command}`);
   const proc = Bun.spawn(["bash", "-lc", command], {
     cwd: root,
-    stdout: "inherit",
+    stdout: eventSink ? "pipe" : "inherit",
     stderr: "inherit",
     stdin: "inherit",
   });
+  if (eventSink && proc.stdout) {
+    for await (const chunk of proc.stdout) emit("output", { text: new TextDecoder().decode(chunk) });
+  }
   const code = await proc.exited;
   if (code !== 0) fail(`Step '${label}' failed with exit code ${code}`);
 }
@@ -75,6 +64,7 @@ type PipelineCursor = { stepId: string; visit: number; visits: Record<string, nu
 async function saveCursor(journal: DurableJournal, cursor: PipelineCursor): Promise<void> {
   await appendEvent(journal.conversation, "factory.cursor", { runId: journal.runId, ...cursor });
   journal.cursor = cursor;
+  emit("transition", { runId: journal.runId, ...cursor });
 }
 
 async function executePipeline(
@@ -107,10 +97,10 @@ async function executePipeline(
     const stepId: string = active.stepId;
     const visit: number = active.visit;
     const label = typeof step.name === "string" ? step.name : stepId;
-    const key: string = `${workflowPath}:${jobName}:${name}:${stepId}:${visit}`;
+    const key: string = `${journal.round > 1 ? `round:${journal.round}:` : ""}${workflowPath}:${jobName}:${name}:${stepId}:${visit}`;
     const stepResults = new Map<string, RecordValue>();
     for (const [priorStep, priorVisit] of Object.entries(active.visits)) {
-      const priorKey = `${workflowPath}:${jobName}:${name}:${priorStep}:${priorVisit}`;
+      const priorKey = `${journal.round > 1 ? `round:${journal.round}:` : ""}${workflowPath}:${jobName}:${name}:${priorStep}:${priorVisit}`;
       const priorResult = journal.results.get(priorKey);
       if (priorResult) stepResults.set(priorStep, priorResult);
     }
@@ -126,7 +116,8 @@ async function executePipeline(
         } else if (typeof step.agent === "string") {
           const task = interpolate(string(step.task, `Step '${label}' task`), inputs, false, stepResults);
           console.log(`\n▶ ${label} (${step.agent}, visit ${visit})`);
-          const requestId = `factory-${journal.runId}-${stepId}-${visit}`;
+          emit("agent", { runId: journal.runId, stepId, agent: step.agent, visit, status: "started" });
+          const requestId = `factory-${journal.runId}-${journal.round > 1 ? `round-${journal.round}-` : ""}${stepId}-${visit}`;
           result = await journal.runAgent(step.agent, task, requestId);
         } else {
           throw new Error(`Step '${label}' must define either 'run' or 'agent'`);
@@ -172,43 +163,6 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-function collectInputs(pipeline: RecordValue, args: string[], requireValues = true): Record<string, string> {
-  const definitions = pipeline.inputs === undefined ? {} : object(pipeline.inputs, "Pipeline inputs");
-  const supplied: Record<string, string> = {};
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (!arg.startsWith("--")) fail(`Unexpected argument: ${arg}`);
-    const equals = arg.indexOf("=");
-    const key = arg.slice(2, equals < 0 ? undefined : equals);
-    const value = equals >= 0 ? arg.slice(equals + 1) : args[++i];
-    if (value === undefined) fail(`Missing value for --${key}`);
-    if (!(key in definitions)) fail(`Unknown pipeline input: ${key}`);
-    supplied[key] = value;
-  }
-
-  if (!requireValues) return supplied;
-
-  const values: Record<string, string> = {};
-  for (const [name, raw] of Object.entries(definitions)) {
-    const definition = object(raw, `Input '${name}'`);
-    let value = supplied[name] ?? (definition.default === undefined ? undefined : String(definition.default));
-    const required = definition.required !== false;
-    if (!required && value === undefined) continue;
-    const choices = Array.isArray(definition.options) ? definition.options.map(String) : undefined;
-    while (value === undefined || (required && !value.trim())) {
-      if (!process.stdin.isTTY) fail(`Missing required input '${name}'. Pass --${name}=<value>`);
-      const description = typeof definition.description === "string" ? ` (${definition.description})` : "";
-      const choiceText = choices ? ` [${choices.join(", ")}]` : "";
-      value = prompt(`${name}${description}${choiceText}: `) ?? "";
-    }
-    if (value !== undefined && value !== "") {
-      if (choices && !choices.includes(value)) fail(`Input '${name}' must be one of: ${choices.join(", ")}`);
-      values[name] = value;
-    }
-  }
-  return values;
-}
-
 function interpolate(
   template: string,
   inputs: Record<string, string>,
@@ -227,13 +181,26 @@ function interpolate(
     });
 }
 
-async function runPipeline(name: string, args: string[]): Promise<void> {
+export async function runPipeline(
+  name: string,
+  args: string[],
+  selection?: { mode: "new" | "resume" | "refine"; runId?: string; instruction?: string; requestId?: string },
+  onEvent?: (event: RecordValue) => void,
+): Promise<void> {
+  eventSink = onEvent;
   const pipeline = loadYaml(factoryFile("pipelines", name, "yml"));
   validatePipeline(name, false);
   collectInputs(pipeline, args, false);
   const runtime = createAgentRuntime(root, pipeline);
   const workflowPath = `pipeline:${name}`;
-  const journal = await openJournal(root, workflowPath, () => collectInputs(pipeline, args), runtime);
+  const journal = await openJournal(
+    root,
+    workflowPath,
+    () => collectInputs(pipeline, args),
+    runtime,
+    selection,
+  );
+  emit("run", { runId: journal.runId, pipeline: name, round: journal.round });
   const inputs = journal.inputs;
   journal.harness.resume();
   try {
@@ -245,7 +212,9 @@ async function runPipeline(name: string, args: string[]): Promise<void> {
       runId: journal.runId,
       workflow: workflowPath,
       status: "completed",
+      inputs,
     });
+    emit("completed", { runId: journal.runId });
   } finally {
     await journal.harness.close(BACKGROUND_CONTEXT);
   }
@@ -297,15 +266,28 @@ function validatePipeline(name: string, announce = true): void {
   if (announce) console.log(`✓ Pipeline valid: ${name}`);
 }
 
-const [command, target, ...args] = Bun.argv.slice(2);
-try {
-  if (command === "validate" && target) validatePipeline(target);
-  else if (command === "run" && target) await runPipeline(target, args);
-  else {
-    console.error("Usage: factory run <pipeline-name> [--input <value>] | factory validate <pipeline-name>");
-    process.exitCode = 2;
+if (import.meta.main) {
+  const [command, target, ...args] = Bun.argv.slice(2);
+  try {
+    if (command === "session") {
+      const request = JSON.parse(await Bun.stdin.text());
+      console.log = (...values) => console.error(...values);
+      await runPipeline(
+        request.pipeline,
+        Object.entries(request.inputs ?? {}).map(([key, value]) => `--${key}=${value}`),
+        request,
+        (event) => process.stdout.write(`${JSON.stringify(event)}\n`),
+      );
+    } else if (command === "validate" && target) validatePipeline(target);
+    else if (command === "run" && target) await runPipeline(target, args);
+    else {
+      console.error(
+        "Usage: factory run <pipeline-name> [--input <value>] | factory validate <pipeline-name>",
+      );
+      process.exitCode = 2;
+    }
+  } catch (error) {
+    console.error(`\n✗ ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
   }
-} catch (error) {
-  console.error(`\n✗ ${error instanceof Error ? error.message : String(error)}`);
-  process.exitCode = 1;
 }

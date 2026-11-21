@@ -7,6 +7,7 @@ import { parse } from "yaml";
 import { object } from "./pipeline-inputs";
 import {
   chooseRun,
+  workspaceIdentity,
   parseCommand,
   promptInputs,
   readRuns,
@@ -185,14 +186,23 @@ export default function factoryExtension(pi: ExtensionAPI) {
               });
               const sessionFile = sm.getSessionFile();
               if (!sessionFile) throw new Error("Factory requires persistent Pi sessions");
-              const run: Run = { runId, pipeline, sessionFile, status: "started", pending: request };
+              const run: Run = {
+                runId,
+                pipeline,
+                sessionFile,
+                status: "started",
+                pending: request,
+                workspace: workspaceIdentity(root),
+                goal: inputs.goal,
+                createdAt: new Date().toISOString(),
+              };
               saveRun(root, run);
             },
           });
           if (result.cancelled) return;
         } else {
           const mode = command as "resume" | "refine";
-          const run = await chooseRun(readRuns(ctx.cwd), mode, target, ctx.ui);
+          const run = await chooseRun(readRuns(ctx.cwd), mode, target, ctx.ui, workspaceIdentity(root));
           if (!run) return;
           const instruction =
             mode === "refine" ? await ctx.ui.editor("Additional Factory instruction") : undefined;

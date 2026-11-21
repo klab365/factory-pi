@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import {
@@ -11,6 +13,8 @@ import {
   runChild,
   type PromptUI,
   type Request,
+  type Run,
+  workspaceIdentity,
 } from "../src/pi-session";
 
 const ui: PromptUI = {
@@ -281,4 +285,97 @@ test("does not spawn a runner for an already aborted signal", async () => {
   await expect(
     runChild("/nonexistent", { mode: "new", runId: "cancel", pipeline: "test" }, () => {}, controller.signal),
   ).rejects.toThrow("already cancelled");
+});
+
+test("refine scopes shared catalogs, directly selects one run and allows explicit legacy IDs", async () => {
+  const workspace = { repository: "/repo", worktree: "/repo/main" };
+  const local: Run = {
+    runId: "local",
+    pipeline: "test",
+    sessionFile: "/local",
+    status: "completed",
+    workspace,
+    goal: "my goal",
+    createdAt: "2026-01-01T00:00:00Z",
+  };
+  const foreign: Run = { ...local, runId: "foreign", workspace: { ...workspace, worktree: "/repo/other" } };
+  const legacy: Run = { ...local, runId: "legacy", workspace: undefined };
+  const interrupted: Run = { ...local, runId: "interrupted", status: "started" };
+  const noPicker = {
+    ...ui,
+    select: async () => {
+      throw new Error("unexpected picker");
+    },
+  };
+  expect(
+    await chooseRun([foreign, legacy, interrupted, local], "refine", undefined, noPicker, workspace),
+  ).toEqual(local);
+  await expect(chooseRun([foreign, legacy], "refine", undefined, noPicker, workspace)).rejects.toThrow(
+    "No completed",
+  );
+  await expect(chooseRun([foreign], "refine", "foreign", ui, workspace)).rejects.toThrow("another worktree");
+  expect(await chooseRun([legacy], "refine", "legacy", ui, workspace)).toEqual(legacy);
+  const second = { ...local, runId: "second", goal: "second goal" };
+  let labels: string[] = [];
+  const picker = {
+    ...ui,
+    select: async (_title: string, choices: string[]) => {
+      labels = choices;
+      return choices[1];
+    },
+  };
+  expect(await chooseRun([foreign, legacy, local, second], "refine", undefined, picker, workspace)).toEqual(
+    second,
+  );
+  expect(labels).toHaveLength(2);
+  expect(labels[0]).toContain("my goal");
+  expect(labels[0]).toContain("test");
+  expect(labels[0]).toContain("2026-01-01");
+  expect(
+    await chooseRun(
+      [local, second],
+      "refine",
+      undefined,
+      { ...ui, select: async () => undefined },
+      workspace,
+    ),
+  ).toBeUndefined();
+});
+
+test("workspace identity canonicalizes non-git directories", () => {
+  const root = mkdtempSync(resolve(tmpdir(), "factory-workspace-"));
+  try {
+    expect(workspaceIdentity(root)).toEqual({ repository: realpathSync(root), worktree: realpathSync(root) });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("linked git worktrees share repository identity but not worktree identity", () => {
+  const root = mkdtempSync(resolve(tmpdir(), "factory-git-workspaces-"));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: root, stdio: "pipe" });
+  try {
+    git("init");
+    git(
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.invalid",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "--allow-empty",
+      "-m",
+      "fixture",
+    );
+    git("worktree", "add", "--detach", resolve(root, "linked"));
+    mkdirSync(resolve(root, "subdir"));
+    const main = workspaceIdentity(root);
+    const linked = workspaceIdentity(resolve(root, "linked"));
+    expect(linked.repository).toBe(main.repository);
+    expect(linked.worktree).not.toBe(main.worktree);
+    expect(workspaceIdentity(resolve(root, "subdir"))).toEqual(main);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

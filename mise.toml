@@ -1,5 +1,6 @@
 [tools]
 bun = "1.4.4"
+python = "3.13.16"
 
 [hooks]
 postinstall = "bun install --frozen-lockfile"

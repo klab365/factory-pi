@@ -1,11 +1,36 @@
 import { humanPrompt, type HumanPrompt } from "./human";
+import { execFileSync } from "node:child_process";
 import { spawn } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync, realpathSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { collectInputs, object, type RecordValue } from "./pipeline-inputs";
 
+export type Workspace = { repository: string; worktree: string };
+
+// Canonical paths distinguish linked worktrees while normalizing symlinks/subdirectories.
+export function workspaceIdentity(cwd: string): Workspace {
+  try {
+    const git = (arg: string) =>
+      execFileSync("git", ["rev-parse", arg], {
+        cwd,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+    return {
+      repository: realpathSync(resolve(cwd, git("--git-common-dir"))),
+      worktree: realpathSync(git("--show-toplevel")),
+    };
+  } catch {
+    const path = realpathSync(cwd);
+    return { repository: path, worktree: path };
+  }
+}
+
 export type Run = {
+  workspace?: Workspace;
+  goal?: string;
+  createdAt?: string;
   runId: string;
   pipeline: string;
   sessionFile: string;
@@ -83,20 +108,30 @@ export async function chooseRun(
   mode: "resume" | "refine",
   id: string | undefined,
   ui: PromptUI,
+  workspace?: Workspace,
 ): Promise<Run | undefined> {
   const candidates = runs.filter((run) =>
     mode === "resume" ? run.status === "started" : run.status === "completed",
   );
+  const matches = (run: Run) =>
+    !workspace ||
+    (run.workspace?.repository === workspace.repository && run.workspace?.worktree === workspace.worktree);
   if (id) {
     const run = candidates.find((run) => run.runId === id);
     if (!run) throw new Error(`No ${mode === "resume" ? "interrupted" : "completed"} run with ID '${id}'`);
+    if (mode === "refine" && run.workspace && !matches(run))
+      throw new Error(`Factory run '${id}' belongs to another worktree; open that worktree to refine it`);
     return run;
   }
-  if (!candidates.length)
-    throw new Error(`No ${mode === "resume" ? "interrupted" : "completed"} Factory runs`);
-  const labels = candidates.map((run) => `${run.runId} · ${run.pipeline}`);
+  const eligible = mode === "refine" ? candidates.filter(matches) : candidates;
+  if (!eligible.length) throw new Error(`No ${mode === "resume" ? "interrupted" : "completed"} Factory runs`);
+  if (mode === "refine" && eligible.length === 1) return eligible[0];
+  const labels = eligible.map(
+    (run) =>
+      `${run.runId.slice(0, 8)} · ${run.pipeline} · ${run.createdAt ?? "unknown date"} · ${(run.goal ?? "unknown goal").replace(/\s+/g, " ")} · ${run.runId}`,
+  );
   const selected = await ui.select(`Factory ${mode}`, labels);
-  return candidates[labels.indexOf(selected ?? "")];
+  return eligible[labels.indexOf(selected ?? "")];
 }
 export async function runChild(
   root: string,

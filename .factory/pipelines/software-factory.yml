@@ -20,12 +20,15 @@ steps:
       Address prior reviewer feedback if provided:
       ${{ steps.review.feedback }}
 
+      Address the latest human feedback if provided:
+      ${{ steps.human_feedback.response }}
+
   - id: review
     name: Review implementation
     agent: reviewer
     maxVisits: 3
     transitions:
-      approved: end
+      approved: accept
       changes_requested: implement
     task: |-
       Review the changes made in this run for correctness, regressions, and missing tests.
@@ -34,3 +37,29 @@ steps:
       Report actionable findings with file and line references. Do not modify files.
       Return status `approved` when clean, otherwise `changes_requested`
       and put actionable fixes in `feedback`.
+
+  - id: accept
+    name: Human acceptance
+    maxVisits: 3
+    human:
+      prompt: Approve the reviewed changes, commit and push this branch, and open or update its PR?
+      choices: [approved, change_requested, rejected]
+    transitions:
+      approved: publish
+      change_requested: human_feedback
+      rejected: end
+
+  - id: human_feedback
+    name: Request human feedback
+    maxVisits: 5
+    human:
+      prompt: What should the builder change?
+    transitions:
+      completed: implement
+
+  - id: publish
+    name: Publish approved changes
+    run: bun run src/publish-pr.ts ${{ inputs.goal }}
+    captureOutput: true
+    transitions:
+      completed: end

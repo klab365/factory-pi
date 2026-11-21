@@ -12,7 +12,32 @@ import {
   factoryFile,
   collectInputs,
 } from "./pipeline-inputs";
+import { createInterface } from "node:readline/promises";
+import { humanPrompt, humanResult, type HumanPrompt } from "./human";
 const root = process.cwd();
+let requestHuman: ((prompt: HumanPrompt, key: string) => Promise<unknown>) | undefined;
+async function terminalHuman(prompt: HumanPrompt): Promise<unknown> {
+  if (!process.stdin.isTTY)
+    throw new Error(
+      "Human response required: use an interactive terminal or --human-response=<value> on resume",
+    );
+  const ui = createInterface({ input: process.stdin, output: process.stderr });
+  const controller = new AbortController();
+  ui.once("close", () => controller.abort());
+  try {
+    return await ui.question(
+      `${prompt.prompt}${prompt.choices ? ` (${prompt.choices.join(" / ")})` : ""}: `,
+      {
+        signal: controller.signal,
+      },
+    );
+  } catch (error) {
+    if (controller.signal.aborted) return undefined;
+    throw error;
+  } finally {
+    ui.close();
+  }
+}
 let eventSink: ((event: RecordValue) => void) | undefined;
 function emit(type: string, data: RecordValue) {
   eventSink?.({ type, ...data });
@@ -44,19 +69,29 @@ async function recordStep(
   }
 }
 
-async function runCommand(command: string, label: string): Promise<void> {
+async function runCommand(command: string, label: string, captureOutput: boolean): Promise<string> {
   console.log(`\n▶ ${label}: ${command}`);
   const proc = Bun.spawn(["bash", "-lc", command], {
     cwd: root,
-    stdout: eventSink ? "pipe" : "inherit",
+    stdout: eventSink || captureOutput ? "pipe" : "inherit",
     stderr: "inherit",
     stdin: "inherit",
   });
-  if (eventSink && proc.stdout) {
-    for await (const chunk of proc.stdout) emit("output", { text: new TextDecoder().decode(chunk) });
+  let output = "";
+  if (proc.stdout) {
+    const decoder = new TextDecoder();
+    const display = (text: string) => {
+      if (!text) return;
+      if (eventSink) emit("output", { text });
+      else process.stdout.write(text);
+      if (captureOutput) output += text;
+    };
+    for await (const chunk of proc.stdout) display(decoder.decode(chunk, { stream: true }));
+    display(decoder.decode());
   }
   const code = await proc.exited;
   if (code !== 0) fail(`Step '${label}' failed with exit code ${code}`);
+  return output.trimEnd();
 }
 
 type PipelineCursor = { stepId: string; visit: number; visits: Record<string, number> };
@@ -111,16 +146,38 @@ async function executePipeline(
       await recordStep(journal, key, stepId, visit, "started");
       try {
         if (typeof step.run === "string") {
-          await runCommand(interpolate(step.run, inputs, true, stepResults), label);
-          result = { status: "completed", summary: "Command completed" };
+          const captureOutput = step.captureOutput === true;
+          const output = await runCommand(
+            interpolate(step.run, inputs, true, stepResults),
+            label,
+            captureOutput,
+          );
+          result = {
+            status: "completed",
+            summary: "Command completed",
+            ...(captureOutput ? { output } : {}),
+          };
         } else if (typeof step.agent === "string") {
           const task = interpolate(string(step.task, `Step '${label}' task`), inputs, false, stepResults);
           console.log(`\n▶ ${label} (${step.agent}, visit ${visit})`);
           emit("agent", { runId: journal.runId, stepId, agent: step.agent, visit, status: "started" });
           const requestId = `factory-${journal.runId}-${journal.round > 1 ? `round-${journal.round}-` : ""}${stepId}-${visit}`;
           result = await journal.runAgent(step.agent, task, requestId);
+        } else if (step.human !== undefined) {
+          const prompt = humanPrompt(step.human);
+          prompt.prompt = interpolate(prompt.prompt, inputs, false, stepResults);
+          await appendEvent(journal.conversation, "factory.human.pending", {
+            runId: journal.runId,
+            key,
+            ...prompt,
+          });
+          emit("pending-input", { runId: journal.runId, stepId, key, ...prompt });
+          result = humanResult(
+            prompt,
+            await (requestHuman ? requestHuman(prompt, key) : terminalHuman(prompt)),
+          );
         } else {
-          throw new Error(`Step '${label}' must define either 'run' or 'agent'`);
+          throw new Error(`Step '${label}' must define 'run', 'agent', or 'human'`);
         }
         await recordStep(journal, key, stepId, visit, "completed", result);
       } catch (error) {
@@ -177,7 +234,7 @@ function interpolate(
     })
     .replace(/\$\{\{\s*steps\.([\w-]+)\.([\w-]+)\s*\}\}/g, (_match, stepId: string, field: string) => {
       const value = stepResults.get(stepId)?.[field];
-      return typeof value === "string" ? value : "";
+      return typeof value === "string" ? (quoteForShell ? shellQuote(value) : value) : "";
     });
 }
 
@@ -188,6 +245,16 @@ export async function runPipeline(
   onEvent?: (event: RecordValue) => void,
 ): Promise<void> {
   eventSink = onEvent;
+  const responseArg = args.find((arg) => arg.startsWith("--human-response="));
+  if (responseArg) {
+    let consumed = false;
+    requestHuman = async () => {
+      if (consumed) throw new Error("Another human response is required");
+      consumed = true;
+      return responseArg.slice("--human-response=".length);
+    };
+    args = args.filter((arg) => arg !== responseArg);
+  }
   const pipeline = loadYaml(factoryFile("pipelines", name, "yml"));
   validatePipeline(name, false);
   collectInputs(pipeline, args, false);
@@ -239,15 +306,22 @@ function validatePipeline(name: string, announce = true): void {
     const id = string(step.id, `Pipeline '${name}' step ${index + 1} id`);
     if (ids.has(id)) fail(`Pipeline '${name}' has duplicate step id '${id}'`);
     ids.add(id);
-    if ((step.run !== undefined) === (step.agent !== undefined)) {
-      fail(`Pipeline step '${id}' must define exactly one of 'run' or 'agent'`);
+    if ([step.run, step.agent, step.human].filter((value) => value !== undefined).length !== 1) {
+      fail(`Pipeline step '${id}' must define exactly one of 'run', 'agent', or 'human'`);
+    }
+    if (
+      step.captureOutput !== undefined &&
+      (step.run === undefined || typeof step.captureOutput !== "boolean")
+    ) {
+      fail(`Pipeline step '${id}' captureOutput must be a boolean on a 'run' step`);
     }
     if (step.run !== undefined) {
       string(step.run, `Pipeline step '${id}' run`);
     } else if (typeof step.agent === "string") {
       loadAgentDefinition(root, step.agent);
       string(step.task, `Pipeline '${name}' step ${index + 1} task`);
-    } else fail(`Pipeline '${name}' step ${index + 1} needs 'run' or 'agent'`);
+    } else if (step.human !== undefined) humanPrompt(step.human);
+    else fail(`Pipeline step '${id}' agent must be a string`);
     if (step.maxVisits !== undefined && (!Number.isInteger(step.maxVisits) || Number(step.maxVisits) < 1)) {
       fail(`Pipeline step '${id}' maxVisits must be a positive integer`);
     }
@@ -270,14 +344,33 @@ if (import.meta.main) {
   const [command, target, ...args] = Bun.argv.slice(2);
   try {
     if (command === "session") {
-      const request = JSON.parse(await Bun.stdin.text());
+      const lines = createInterface({ input: process.stdin });
+      const iterator = lines[Symbol.asyncIterator]();
+      const first = await iterator.next();
+      const request = object(JSON.parse(first.value ?? "null"), "Session request");
+      requestHuman = async (_prompt, key) => {
+        const next = await iterator.next();
+        if (next.done) return undefined;
+        const response = object(JSON.parse(next.value), "Human response");
+        if (response.key !== key) throw new Error("Human response does not match pending input");
+        return response.response;
+      };
       console.log = (...values) => console.error(...values);
-      await runPipeline(
-        request.pipeline,
-        Object.entries(request.inputs ?? {}).map(([key, value]) => `--${key}=${value}`),
-        request,
-        (event) => process.stdout.write(`${JSON.stringify(event)}\n`),
-      );
+      try {
+        await runPipeline(
+          string(request.pipeline, "Pipeline"),
+          Object.entries(request.inputs ?? {}).map(([key, value]) => `--${key}=${value}`),
+          {
+            mode: request.mode === "resume" || request.mode === "refine" ? request.mode : "new",
+            runId: string(request.runId, "Run ID"),
+            ...(typeof request.requestId === "string" ? { requestId: request.requestId } : {}),
+            ...(typeof request.instruction === "string" ? { instruction: request.instruction } : {}),
+          },
+          (event) => process.stdout.write(`${JSON.stringify(event)}\n`),
+        );
+      } finally {
+        lines.close();
+      }
     } else if (command === "validate" && target) validatePipeline(target);
     else if (command === "run" && target) await runPipeline(target, args);
     else {

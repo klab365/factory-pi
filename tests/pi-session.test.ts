@@ -102,6 +102,51 @@ test("child protocol reuses CLI: new runs independent, resume skips work, refine
   }
 });
 
+test("fake Pi UI can cancel and resume a durable human checkpoint without repeating effects", async () => {
+  const root = mkdtempSync(resolve(tmpdir(), "factory-pi-human-"));
+  try {
+    mkdirSync(resolve(root, ".factory/pipelines"), { recursive: true });
+    writeFileSync(
+      resolve(root, ".factory/pipelines/test.yml"),
+      `steps:
+  - id: prepare
+    run: echo prepared >> effects
+  - id: feedback
+    human:
+      prompt: What should change?
+  - id: apply
+    run: printf '%s\\n' \${{ steps.feedback.response }} >> effects
+`,
+    );
+    const pending: unknown[] = [];
+    const response = "Don't expand $(echo injected)";
+    let prompts = 0;
+    const run = (mode: Request["mode"]) =>
+      runChild(
+        root,
+        { mode, runId: "human", pipeline: "test" },
+        (event) => {
+          if (event.type === "pending-input") pending.push(event.key);
+        },
+        undefined,
+        {
+          human: async (prompt) => {
+            expect(prompt.prompt).toBe("What should change?");
+            return ++prompts === 1 ? undefined : response;
+          },
+        },
+      );
+    await expect(run("new")).rejects.toThrow("Human input cancelled");
+    expect(readFileSync(resolve(root, "effects"), "utf8")).toBe("prepared\n");
+    await run("resume");
+    await run("resume");
+    expect(pending).toEqual([expect.any(String), pending[0]]);
+    expect(readFileSync(resolve(root, "effects"), "utf8")).toBe(`prepared\n${response}\n`);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a durable completion settles even if the runner hangs during shutdown", async () => {
   const root = mkdtempSync(resolve(tmpdir(), "factory-pi-terminal-"));
   const controller = new AbortController();

@@ -1,3 +1,4 @@
+import { humanPrompt, type HumanPrompt } from "./human";
 import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
@@ -102,7 +103,12 @@ export async function runChild(
   request: Request,
   onEvent: (event: RecordValue) => void,
   signal?: AbortSignal,
-  options: { command?: string; args?: string[]; completionGraceMs?: number } = {},
+  options: {
+    command?: string;
+    args?: string[];
+    completionGraceMs?: number;
+    human?: (prompt: HumanPrompt) => Promise<string | undefined>;
+  } = {},
 ): Promise<void> {
   signal?.throwIfAborted();
   const cli = fileURLToPath(new URL("./cli.ts", import.meta.url));
@@ -171,6 +177,25 @@ export async function runChild(
         const event = object(JSON.parse(line), "Factory event");
         if (event.runId !== undefined && event.runId !== request.runId)
           throw new Error(`Factory event runId mismatch: ${event.runId}`);
+        if (event.type === "pending-input") {
+          if (!options.human) throw new Error("Human input requires interactive Pi");
+          const prompt = humanPrompt(event);
+          void options
+            .human(prompt)
+            .then((response) => {
+              if (stopping || closed) return;
+              if (response === undefined) {
+                failure = new Error("Human input cancelled; resume to respond");
+                stop();
+                return;
+              }
+              child.stdin.write(`${JSON.stringify({ key: event.key, response })}\n`);
+            })
+            .catch((error: unknown) => {
+              failure = error;
+              stop();
+            });
+        }
         if (event.type === "completed") {
           completed = true;
           completionTimer = setTimeout(() => {
@@ -199,7 +224,7 @@ export async function runChild(
         done(code);
       });
     });
-    child.stdin.end(JSON.stringify(request));
+    child.stdin.write(`${JSON.stringify(request)}\n`);
     const code = await childClosed;
     await stopping;
     if (failure !== undefined) throw failure;

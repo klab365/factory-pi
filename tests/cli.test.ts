@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { describe, expect, test } from "bun:test";
+import { parse, stringify } from "yaml";
 
 const repository = resolve(import.meta.dir, "..");
 function runCli(cwd: string, ...args: string[]) {
@@ -129,4 +130,90 @@ steps:
       },
     );
   });
+});
+
+test("software-factory sends requested human changes to the next builder visit", () => {
+  const pipeline = parse(readFileSync(`${repository}/.factory/pipelines/software-factory.yml`, "utf8"));
+  const [builder, reviewer, accept, feedback, publish] = pipeline.steps;
+  // Keep the real task template and human transitions, but avoid model calls and pushes.
+  pipeline.steps = [
+    {
+      id: builder.id,
+      maxVisits: builder.maxVisits,
+      transitions: builder.transitions,
+      run: `cat > builder-task <<'FACTORY_TASK'\n${builder.task}\nFACTORY_TASK`,
+    },
+    {
+      id: reviewer.id,
+      maxVisits: reviewer.maxVisits,
+      transitions: { completed: reviewer.transitions.approved },
+      run: "true",
+    },
+    accept,
+    feedback,
+    { ...publish, run: "echo https://example.test/pr/1 >> published; cat published" },
+  ];
+  fixture(stringify(pipeline), (root) => {
+    const start = runCli(root, "run", "test", "--goal=Test the loop");
+    expect(start.output).toContain("Human response required");
+    const request = runCli(root, "run", "test", "--human-response=change_requested");
+    expect(request.output).toContain("Another human response is required");
+    expect(readFileSync(`${root}/builder-task`, "utf8")).not.toContain("Add a regression test");
+    const feedback = runCli(root, "run", "test", "--human-response=Add a regression test");
+    expect(feedback.output).toContain("Another human response is required");
+    expect(readFileSync(`${root}/builder-task`, "utf8")).toContain("Add a regression test");
+    expect(existsSync(`${root}/published`)).toBe(false);
+    const approved = runCli(root, "run", "test", "--human-response=approved");
+    expect(approved.exitCode).toBe(0);
+    expect(approved.output).toContain("https://example.test/pr/1");
+    expect(readFileSync(`${root}/published`, "utf8")).toBe("https://example.test/pr/1\n");
+  });
+  fixture(stringify(pipeline), (root) => {
+    const rejected = runCli(root, "run", "test", "--goal=Reject", "--human-response=rejected");
+    expect(rejected.exitCode).toBe(0);
+    expect(existsSync(`${root}/published`)).toBe(false);
+  });
+});
+
+test("opt-in shell output is available from the durable result after resume", () => {
+  fixture(
+    `steps:
+  - id: capture
+    run: printf 'https://example.test/pr/1\\n'
+    captureOutput: true
+  - id: retry
+    run: 'if [ ! -e retried ]; then touch retried; exit 1; fi; printf "%s" \${{ steps.capture.output }} > url'
+`,
+    (root) => {
+      expect(runCli(root, "run", "test").exitCode).toBe(1);
+      const resumed = runCli(root, "run", "test");
+      expect(resumed.exitCode).toBe(0);
+      expect(resumed.output).not.toContain("▶ capture");
+      expect(readFileSync(`${root}/url`, "utf8")).toBe("https://example.test/pr/1");
+    },
+  );
+});
+
+test("human checkpoint resumes and does not repeat downstream side effects", () => {
+  fixture(
+    `steps:
+  - id: approve
+    human:
+      prompt: Approve?
+      choices: [approved, rejected]
+    transitions: {approved: publish, rejected: end}
+  - id: publish
+    run: echo published >> effects
+`,
+    (root) => {
+      const pending = runCli(root, "run", "test");
+      expect(pending.exitCode).toBe(1);
+      expect(pending.output).toContain("Human response required");
+      expect(existsSync(`${root}/effects`)).toBe(false);
+      expect(runCli(root, "run", "test", "--human-response=invalid").exitCode).toBe(1);
+      const accepted = runCli(root, "run", "test", "--human-response=approved");
+      expect(accepted.exitCode).toBe(0);
+      expect(readFileSync(`${root}/effects`, "utf8")).toBe("published\n");
+    },
+  );
 });

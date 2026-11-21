@@ -59,7 +59,8 @@ steps:
 
   - id: publish
     name: Publish approved changes
-    run: bun run src/publish-pr.ts ${{ inputs.goal }}
-    captureOutput: true
+    shell:
+      command: bun run src/publish-pr.ts ${{ inputs.goal }}
+      outputs: {stdout: true}
     transitions:
       completed: end

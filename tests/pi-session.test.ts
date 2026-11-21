@@ -63,7 +63,7 @@ test("child protocol reuses CLI: new runs independent, resume skips work, refine
   mkdirSync(resolve(root, ".factory/pipelines"), { recursive: true });
   writeFileSync(
     resolve(root, ".factory/pipelines/test.yml"),
-    `inputs:\n  goal: {}\nsteps:\n  - id: work\n    run: echo \${{ inputs.goal }} >> output\n`,
+    `inputs:\n  goal: {}\nsteps:\n  - id: work\n    shell: echo \${{ inputs.goal }} >> output\n`,
   );
   const events: Record<string, unknown>[] = [];
   const run = (request: Request) => runChild(root, request, (event) => events.push(event));
@@ -110,12 +110,12 @@ test("fake Pi UI can cancel and resume a durable human checkpoint without repeat
       resolve(root, ".factory/pipelines/test.yml"),
       `steps:
   - id: prepare
-    run: echo prepared >> effects
+    shell: echo prepared >> effects
   - id: feedback
     human:
       prompt: What should change?
   - id: apply
-    run: printf '%s\\n' \${{ steps.feedback.response }} >> effects
+    shell: printf '%s\\n' \${{ steps.feedback.response }} >> effects
 `,
     );
     const pending: unknown[] = [];
@@ -217,7 +217,7 @@ test.skipIf(process.platform === "win32").each(["abort", "event error"])(
       `
 steps:
   - id: wait
-    run: |
+    shell: |
       echo "$PPID" > runner.pid
       echo "$$" > shell.pid
       bun descendant.ts &

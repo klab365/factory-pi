@@ -37,7 +37,7 @@ describe("factory CLI", () => {
   });
 
   test("rejects unknown inputs and requires inputs on new runs", () => {
-    fixture("inputs:\n  goal: {}\nsteps:\n  - id: work\n    run: 'true'\n", (root) => {
+    fixture("inputs:\n  goal: {}\nsteps:\n  - id: work\n    shell: 'true'\n", (root) => {
       expect(runCli(root, "run", "test", "--unknown=value").output).toContain(
         "Unknown pipeline input: unknown",
       );
@@ -48,10 +48,19 @@ describe("factory CLI", () => {
   });
 
   test.each([
-    ["steps:\n  - id: work\n    run: 'true'\n    maxVisits: 0\n", "maxVisits must be a positive integer"],
-    ["steps:\n  - id: work\n    run: 'true'\n    agent: builder\n", "exactly one"],
+    ["steps:\n  - id: work\n    run: 'true'\n", "removed 'run'; use 'shell' instead"],
     [
-      "steps:\n  - id: work\n    run: 'touch unwanted'\n    transitions: {completed: missing}\n",
+      "steps:\n  - id: work\n    shell: {command: 'true', timeout: 0}\n",
+      "timeout must be a positive integer",
+    ],
+    [
+      "steps:\n  - id: work\n    shell: {command: 'true', outputs: {result: true}}\n",
+      "unknown stream 'result'",
+    ],
+    ["steps:\n  - id: work\n    shell: 'true'\n    maxVisits: 0\n", "maxVisits must be a positive integer"],
+    ["steps:\n  - id: work\n    shell: 'true'\n    agent: builder\n", "exactly one"],
+    [
+      "steps:\n  - id: work\n    shell: 'touch unwanted'\n    transitions: {completed: missing}\n",
       "unknown step",
     ],
   ])("validates before executing: %s", (pipeline, message) => {
@@ -67,7 +76,7 @@ describe("factory CLI", () => {
 
   test("validates selected skills before any shell step or journal creation", () => {
     fixture(
-      "steps:\n  - id: shell\n    run: touch unwanted\n  - id: build\n    agent: builder\n    task: Build\n",
+      "steps:\n  - id: shell\n    shell: touch unwanted\n  - id: build\n    agent: builder\n    task: Build\n",
       (root) => {
         mkdirSync(`${root}/.factory/agents`, { recursive: true });
         writeFileSync(
@@ -89,7 +98,7 @@ describe("factory CLI", () => {
     fixture(
       `steps:
   - id: work
-    run: echo visit >> visits
+    shell: echo visit >> visits
     maxVisits: 2
     transitions: {completed: work}
 `,
@@ -113,9 +122,9 @@ describe("factory CLI", () => {
   optional: {required: false}
 steps:
   - id: first
-    run: echo saved >> count; printf '%s' \${{ inputs.goal }} > goal
+    shell: echo saved >> count; printf '%s' \${{ inputs.goal }} > goal
   - id: retry
-    run: 'if [ ! -e retried ]; then touch retried; exit 1; fi; printf "%s" \${{ inputs.goal }} > resumed-goal'
+    shell: 'if [ ! -e retried ]; then touch retried; exit 1; fi; printf "%s" \${{ inputs.goal }} > resumed-goal'
 `,
       (root) => {
         const first = runCli(root, "run", "test", "--goal=original");
@@ -141,17 +150,23 @@ test("software-factory sends requested human changes to the next builder visit",
       id: builder.id,
       maxVisits: builder.maxVisits,
       transitions: builder.transitions,
-      run: `cat > builder-task <<'FACTORY_TASK'\n${builder.task}\nFACTORY_TASK`,
+      shell: `cat > builder-task <<'FACTORY_TASK'\n${builder.task}\nFACTORY_TASK`,
     },
     {
       id: reviewer.id,
       maxVisits: reviewer.maxVisits,
       transitions: { completed: reviewer.transitions.approved },
-      run: "true",
+      shell: "true",
     },
     accept,
     feedback,
-    { ...publish, run: "echo https://example.test/pr/1 >> published; cat published" },
+    {
+      ...publish,
+      shell: {
+        command: "echo https://example.test/pr/1 >> published; cat published",
+        outputs: { stdout: true },
+      },
+    },
   ];
   fixture(stringify(pipeline), (root) => {
     const start = runCli(root, "run", "test", "--goal=Test the loop");
@@ -175,14 +190,15 @@ test("software-factory sends requested human changes to the next builder visit",
   });
 });
 
-test("opt-in shell output is available from the durable result after resume", () => {
+test("selected shell output is available from the durable result after resume", () => {
   fixture(
     `steps:
   - id: capture
-    run: printf 'https://example.test/pr/1\\n'
-    captureOutput: true
+    shell:
+      command: printf 'https://example.test/pr/1\\n'
+      outputs: {stdout: true}
   - id: retry
-    run: 'if [ ! -e retried ]; then touch retried; exit 1; fi; printf "%s" \${{ steps.capture.output }} > url'
+    shell: 'if [ ! -e retried ]; then touch retried; exit 1; fi; printf "%s" \${{ steps.capture.stdout }} > url'
 `,
     (root) => {
       expect(runCli(root, "run", "test").exitCode).toBe(1);
@@ -194,6 +210,51 @@ test("opt-in shell output is available from the durable result after resume", ()
   );
 });
 
+test("shell steps configure directory and environment and capture selected streams", () => {
+  fixture(
+    `inputs: {goal: {}}
+steps:
+  - id: configured
+    shell:
+      command: 'printf "%s" "$FACTORY_VALUE"; printf "problem" >&2'
+      workingDirectory: subdir
+      env: {FACTORY_VALUE: "\${{ inputs.goal }}"}
+      outputs: {stdout: true, stderr: true}
+  - id: check
+    shell: 'printf "%s|%s" \${{ steps.configured.stdout }} \${{ steps.configured.stderr }} > result'
+`,
+    (root) => {
+      mkdirSync(`${root}/subdir`);
+      const result = runCli(root, "run", "test", "--goal=passed");
+      expect(result.exitCode).toBe(0);
+      expect(readFileSync(`${root}/result`, "utf8")).toBe("passed|problem");
+    },
+  );
+});
+
+test("shell timeout terminates descendant processes", async () => {
+  const root = mkdtempSync(resolve(tmpdir(), "factory-timeout-"));
+  mkdirSync(`${root}/.factory/pipelines`, { recursive: true });
+  writeFileSync(
+    `${root}/.factory/pipelines/test.yml`,
+    `steps:
+  - id: timeout
+    shell:
+      command: 'sleep 0.4; touch should-not-exist'
+      timeout: 80
+`,
+  );
+  try {
+    const result = runCli(root, "run", "test");
+    expect(result.exitCode).toBe(1);
+    expect(result.output).toContain("timed out after 80 ms");
+    await new Promise((done) => setTimeout(done, 500));
+    expect(existsSync(`${root}/should-not-exist`)).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("human checkpoint resumes and does not repeat downstream side effects", () => {
   fixture(
     `steps:
@@ -203,7 +264,7 @@ test("human checkpoint resumes and does not repeat downstream side effects", () 
       choices: [approved, rejected]
     transitions: {approved: publish, rejected: end}
   - id: publish
-    run: echo published >> effects
+    shell: echo published >> effects
 `,
     (root) => {
       const pending = runCli(root, "run", "test");

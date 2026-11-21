@@ -13,6 +13,8 @@ import {
   collectInputs,
 } from "./pipeline-inputs";
 import { createInterface } from "node:readline/promises";
+import { spawn } from "node:child_process";
+import { resolve } from "node:path";
 import { humanPrompt, humanResult, type HumanPrompt } from "./human";
 const root = process.cwd();
 let requestHuman: ((prompt: HumanPrompt, key: string) => Promise<unknown>) | undefined;
@@ -69,29 +71,153 @@ async function recordStep(
   }
 }
 
-async function runCommand(command: string, label: string, captureOutput: boolean): Promise<string> {
-  console.log(`\n▶ ${label}: ${command}`);
-  const proc = Bun.spawn(["bash", "-lc", command], {
-    cwd: root,
-    stdout: eventSink || captureOutput ? "pipe" : "inherit",
-    stderr: "inherit",
-    stdin: "inherit",
-  });
-  let output = "";
-  if (proc.stdout) {
-    const decoder = new TextDecoder();
-    const display = (text: string) => {
-      if (!text) return;
-      if (eventSink) emit("output", { text });
-      else process.stdout.write(text);
-      if (captureOutput) output += text;
-    };
-    for await (const chunk of proc.stdout) display(decoder.decode(chunk, { stream: true }));
-    display(decoder.decode());
+type ShellSpec = {
+  command: string;
+  workingDirectory: string;
+  env: Record<string, string>;
+  timeout?: number;
+  outputs: { stdout: boolean; stderr: boolean };
+};
+
+function shellSpec(raw: unknown, label: string): ShellSpec {
+  if (typeof raw === "string") {
+    return { command: raw, workingDirectory: ".", env: {}, outputs: { stdout: false, stderr: false } };
   }
-  const code = await proc.exited;
-  if (code !== 0) fail(`Step '${label}' failed with exit code ${code}`);
-  return output.trimEnd();
+  const value = object(raw, `Step '${label}' shell`);
+  const allowed = new Set(["command", "workingDirectory", "env", "timeout", "outputs"]);
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) fail(`Step '${label}' shell has unknown field '${key}'`);
+  }
+  const command = string(value.command, `Step '${label}' shell command`);
+  const workingDirectory =
+    value.workingDirectory === undefined
+      ? "."
+      : string(value.workingDirectory, `Step '${label}' shell workingDirectory`);
+  const env: Record<string, string> = {};
+  if (value.env !== undefined) {
+    for (const [key, rawValue] of Object.entries(object(value.env, `Step '${label}' shell env`))) {
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key))
+        fail(`Step '${label}' shell env has invalid variable '${key}'`);
+      env[key] = string(rawValue, `Step '${label}' shell env.${key}`);
+    }
+  }
+  let timeout: number | undefined;
+  if (value.timeout !== undefined) {
+    if (!Number.isInteger(value.timeout) || Number(value.timeout) < 1)
+      fail(`Step '${label}' shell timeout must be a positive integer in milliseconds`);
+    timeout = Number(value.timeout);
+  }
+  const outputs = { stdout: false, stderr: false };
+  if (value.outputs !== undefined) {
+    const selected = object(value.outputs, `Step '${label}' shell outputs`);
+    for (const [key, rawSelected] of Object.entries(selected)) {
+      if (key !== "stdout" && key !== "stderr")
+        fail(`Step '${label}' shell outputs has unknown stream '${key}'`);
+      if (typeof rawSelected !== "boolean") fail(`Step '${label}' shell outputs.${key} must be a boolean`);
+      if (key === "stdout") {
+        if (typeof rawSelected === "boolean") outputs.stdout = rawSelected;
+        else fail(`Step '${label}' shell outputs.stdout must be a boolean`);
+      } else {
+        if (typeof rawSelected === "boolean") outputs.stderr = rawSelected;
+        else fail(`Step '${label}' shell outputs.stderr must be a boolean`);
+      }
+    }
+  }
+  return { command, workingDirectory, env, ...(timeout === undefined ? {} : { timeout }), outputs };
+}
+
+async function runCommand(spec: ShellSpec, label: string): Promise<RecordValue> {
+  const command = spec.command;
+  console.log(`\n▶ ${label}: ${command}`);
+  const child = spawn("bash", ["-lc", command], {
+    cwd: resolve(root, spec.workingDirectory),
+    env: { ...process.env, ...spec.env },
+    stdio: ["inherit", "pipe", "pipe"],
+    detached: process.platform !== "win32",
+  });
+  let stdout = "";
+  let stderr = "";
+  let timedOut = false;
+  let stopping = false;
+  let killTimer: ReturnType<typeof setTimeout> | undefined;
+  let killPromise: Promise<void> | undefined;
+  const kill = (signal: NodeJS.Signals) => {
+    if (process.platform !== "win32" && child.pid) {
+      try {
+        process.kill(-child.pid, signal);
+        return;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+      }
+    }
+    child.kill(signal);
+  };
+  const stop = () => {
+    if (stopping) return;
+    stopping = true;
+    kill("SIGTERM");
+    killPromise = new Promise<void>((done) => {
+      killTimer = setTimeout(() => {
+        try {
+          kill("SIGKILL");
+        } finally {
+          done();
+        }
+      }, 300);
+    });
+  };
+  const onSignal = () => stop();
+  process.once("SIGINT", onSignal);
+  process.once("SIGTERM", onSignal);
+  const consume = (stream: NodeJS.ReadableStream, kind: "stdout" | "stderr") => {
+    const decoder = new TextDecoder();
+    stream.on("data", (chunk: Buffer) => {
+      const text = decoder.decode(chunk, { stream: true });
+      if (kind === "stdout") stdout += spec.outputs.stdout ? text : "";
+      else stderr += spec.outputs.stderr ? text : "";
+      if (eventSink) emit("output", { stream: kind, text });
+      else (kind === "stdout" ? process.stdout : process.stderr).write(text);
+    });
+    stream.on("end", () => {
+      const value = decoder.decode();
+      if (!value) return;
+      if (kind === "stdout") stdout += spec.outputs.stdout ? value : "";
+      else stderr += spec.outputs.stderr ? value : "";
+      if (eventSink) emit("output", { stream: kind, text: value });
+      else (kind === "stdout" ? process.stdout : process.stderr).write(value);
+    });
+  };
+  consume(child.stdout, "stdout");
+  consume(child.stderr, "stderr");
+  let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+  if (spec.timeout !== undefined) {
+    timeoutTimer = setTimeout(() => {
+      timedOut = true;
+      stop();
+    }, spec.timeout);
+  }
+  try {
+    const code = await new Promise<number | null>((done, reject) => {
+      child.once("error", reject);
+      child.once("close", done);
+    });
+    await killPromise;
+    if (timedOut) fail(`Step '${label}' timed out after ${spec.timeout} ms`);
+    if (stopping) fail(`Step '${label}' was cancelled`);
+    if (code !== 0) fail(`Step '${label}' failed with exit code ${code}`);
+    return {
+      status: "completed",
+      summary: "Command completed",
+      exitCode: code,
+      ...(spec.outputs.stdout ? { stdout: stdout.trimEnd() } : {}),
+      ...(spec.outputs.stderr ? { stderr: stderr.trimEnd() } : {}),
+    };
+  } finally {
+    if (timeoutTimer) clearTimeout(timeoutTimer);
+    if (killTimer) clearTimeout(killTimer);
+    process.removeListener("SIGINT", onSignal);
+    process.removeListener("SIGTERM", onSignal);
+  }
 }
 
 type PipelineCursor = { stepId: string; visit: number; visits: Record<string, number> };
@@ -145,18 +271,14 @@ async function executePipeline(
     } else {
       await recordStep(journal, key, stepId, visit, "started");
       try {
-        if (typeof step.run === "string") {
-          const captureOutput = step.captureOutput === true;
-          const output = await runCommand(
-            interpolate(step.run, inputs, true, stepResults),
-            label,
-            captureOutput,
-          );
-          result = {
-            status: "completed",
-            summary: "Command completed",
-            ...(captureOutput ? { output } : {}),
-          };
+        if (step.shell !== undefined) {
+          const shell = shellSpec(step.shell, label);
+          shell.command = interpolate(shell.command, inputs, true, stepResults);
+          shell.workingDirectory = interpolate(shell.workingDirectory, inputs, false, stepResults);
+          for (const [key, value] of Object.entries(shell.env)) {
+            shell.env[key] = interpolate(value, inputs, false, stepResults);
+          }
+          result = await runCommand(shell, label);
         } else if (typeof step.agent === "string") {
           const task = interpolate(string(step.task, `Step '${label}' task`), inputs, false, stepResults);
           console.log(`\n▶ ${label} (${step.agent}, visit ${visit})`);
@@ -177,7 +299,7 @@ async function executePipeline(
             await (requestHuman ? requestHuman(prompt, key) : terminalHuman(prompt)),
           );
         } else {
-          throw new Error(`Step '${label}' must define 'run', 'agent', or 'human'`);
+          throw new Error(`Step '${label}' must define 'shell', 'agent', or 'human'`);
         }
         await recordStep(journal, key, stepId, visit, "completed", result);
       } catch (error) {
@@ -306,17 +428,14 @@ function validatePipeline(name: string, announce = true): void {
     const id = string(step.id, `Pipeline '${name}' step ${index + 1} id`);
     if (ids.has(id)) fail(`Pipeline '${name}' has duplicate step id '${id}'`);
     ids.add(id);
-    if ([step.run, step.agent, step.human].filter((value) => value !== undefined).length !== 1) {
-      fail(`Pipeline step '${id}' must define exactly one of 'run', 'agent', or 'human'`);
+    if (step.run !== undefined) fail(`Pipeline step '${id}' uses removed 'run'; use 'shell' instead`);
+    if (step.captureOutput !== undefined)
+      fail(`Pipeline step '${id}' uses removed 'captureOutput'; select streams with shell.outputs`);
+    if ([step.shell, step.agent, step.human].filter((value) => value !== undefined).length !== 1) {
+      fail(`Pipeline step '${id}' must define exactly one of 'shell', 'agent', or 'human'`);
     }
-    if (
-      step.captureOutput !== undefined &&
-      (step.run === undefined || typeof step.captureOutput !== "boolean")
-    ) {
-      fail(`Pipeline step '${id}' captureOutput must be a boolean on a 'run' step`);
-    }
-    if (step.run !== undefined) {
-      string(step.run, `Pipeline step '${id}' run`);
+    if (step.shell !== undefined) {
+      shellSpec(step.shell, id);
     } else if (typeof step.agent === "string") {
       loadAgentDefinition(root, step.agent);
       string(step.task, `Pipeline '${name}' step ${index + 1} task`);

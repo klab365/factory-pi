@@ -38,11 +38,28 @@ steps:
       Return status `approved` when clean, otherwise `changes_requested`
       and put actionable fixes in `feedback`.
 
+      When approved, include three string fields in the factory-result JSON:
+      - `prTitle`: an English imperative title for both the PR and the commit subject,
+        on one line, at most 72 characters, describing the actual change. Do not copy
+        the request, issue URL, or a generic title.
+      - `prSummary`: Markdown bullets describing the changes in the diff.
+      - `prVerification`: Markdown bullets with the checks actually run and their results.
+      Omit section headings and issue closing references from these fields; the publisher adds them.
+
   - id: accept
     name: Human acceptance
     maxVisits: 3
     human:
-      prompt: Approve the reviewed changes, commit and push this branch, and open or update its PR?
+      prompt: |-
+        Approve the reviewed changes, commit and push this branch, and open or update its PR?
+
+        Title / commit subject: ${{ steps.review.prTitle }}
+
+        ## Summary
+        ${{ steps.review.prSummary }}
+
+        ## Verification
+        ${{ steps.review.prVerification }}
       choices: [approved, change_requested, rejected]
     transitions:
       approved: publish
@@ -60,7 +77,12 @@ steps:
   - id: publish
     name: Publish approved changes
     shell:
-      command: bun run src/publish-pr.ts ${{ inputs.goal }}
+      command: >-
+        bun run src/publish-pr.ts
+        ${{ inputs.goal }}
+        ${{ steps.review.prTitle }}
+        ${{ steps.review.prSummary }}
+        ${{ steps.review.prVerification }}
       outputs: {stdout: true}
     transitions:
       completed: end

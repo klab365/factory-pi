@@ -8,7 +8,26 @@ function command(argv: string[], showOutput = false): string {
   return output.trim();
 }
 
-function publish(goal: string): string {
+function issueLinks(goal: string, repository: string): string[] {
+  const refs = new Set<string>();
+  for (const [, repo, number] of goal.matchAll(
+    /https?:\/\/([\w.-]+\/[\w.-]+\/[\w.-]+)\/issues\/([1-9]\d*)(?=$|[\s?#),>\]]|\.(?:\s|$))/gi,
+  )) {
+    if (repo.toLowerCase() === repository.toLowerCase()) refs.add(`Closes #${number}`);
+  }
+  return [...refs];
+}
+
+function publish(goal: string, subject: string, prSummary: string, prVerification: string): string {
+  const title = subject.trim();
+  const summary = prSummary.trim();
+  const verification = prVerification.trim();
+  if (!title || title.length > 72 || /[\r\n]/.test(title) || !summary || !verification) {
+    throw new Error(
+      "Publishing requires a single-line title (max. 72 characters), PR summary, and verification",
+    );
+  }
+
   const git = (...args: string[]) => command(["git", ...args]);
   const branch = git("branch", "--show-current");
   if (!branch) throw new Error("Publishing requires a checked-out branch (not a detached HEAD)");
@@ -45,7 +64,6 @@ function publish(goal: string): string {
   ]);
   if (!base || branch === base) throw new Error("Publishing requires a branch other than the default branch");
 
-  const title = goal.trim().split(/\r?\n/, 1)[0].trim().slice(0, 120) || "Apply reviewed Factory changes";
   if (git("status", "--porcelain")) {
     git("add", "-A");
     if (git("diff", "--cached", "--name-only")) {
@@ -86,13 +104,16 @@ function publish(goal: string): string {
     "--title",
     title,
     "--body",
-    "Published by Factory after human approval.",
+    [`## Summary\n${summary}`, ...issueLinks(goal, repository), `## Verification\n${verification}`].join(
+      "\n\n",
+    ),
   ]);
 }
 
 if (import.meta.main) {
   try {
-    console.log(publish(process.argv[2] ?? ""));
+    const [, , goal = "", title = "", summary = "", verification = ""] = process.argv;
+    console.log(publish(goal, title, summary, verification));
   } catch (error) {
     console.error(error instanceof Error ? error.message : error);
     process.exitCode = 1;

@@ -25,7 +25,7 @@ mise run format
 mise run factory run software-factory --goal="Implementiere X und ergänze passende Tests"
 ```
 
-`software-factory` (`.factory/pipelines/software-factory.yml`) ist die Arbeits-Pipeline für dieses Repository. Builder und Reviewer liefern ein strukturiertes `<factory-result>` mit Status und Feedback. Die YAML-Übergänge routen `completed` zum Review, `changes_requested` zurück zum Builder und `approved` zum Ende; `maxVisits` begrenzt Überarbeitungsschleifen. Ein Fehler stoppt die Pipeline.
+`software-factory` (`.factory/pipelines/software-factory.yml`) ist die Arbeits-Pipeline für dieses Repository. Builder und Reviewer liefern ein strukturiertes `<factory-result>` mit Status und Feedback. Nach `completed` geht es zum Review. `changes_requested` vom Reviewer führt direkt zurück zum Builder, `approved` zur menschlichen Abnahme. Dort beendet `approved` oder `rejected` den Lauf. Bei `change_requested` fragt die Pipeline nach Freitext und schickt ihn zusammen mit dem letzten Reviewer-Feedback an den Builder zurück. Danach folgen erneut Review und Abnahme; `maxVisits` begrenzt die Schleife. Ein Fehler stoppt die Pipeline.
 
 Die Mise-Tasks `format`, `check-format`, `lint`, `tests`, `typecheck`, `validate` und `check` sind auch einzeln ausführbar; `check` bündelt alle Prüfungen. Pi Durable speichert Workflow- und Step-Checkpoints als JSONL in `.factory/state/durable`; ein beim Abbruch offener Lauf wird beim nächsten Start fortgesetzt. Jeder neue Lauf erhält eine eigene frische Run-Conversation für Ergebnisse, Cursor und Checkpoints. Zusätzlich erhält jeder Agent pro Lauf eine eigene Conversation: Erneute Besuche desselben Agents verwenden dieselbe Historie, unterschiedliche Agents bleiben strikt getrennt. Der Orchestrator übergibt nur strukturierte Ergebnisse/Feedback über die Task-Templates; das Arbeitsverzeichnis bleibt gemeinsam. Die Zuordnung von `runId` zu Run-Conversation und von `(runId, agentName)` zu Agent-Conversation wird jeweils atomar mit der Conversation gespeichert. Beim Resume werden exakt diese Conversations wieder geöffnet; ein fehlender Conversation-Datensatz ist ein Fehler und wird nicht durch eine neue Session ersetzt. Bereits vor dieser Trennung gestartete Läufe werden weiterhin in ihrer ursprünglichen Root-Conversation fortgesetzt, einschließlich vorhandener Handoffs; neue Läufe verwenden diese nie. Bereits vor der Agent-Trennung zugelassene Aufrufe werden anhand ihrer Request-ID in der Run-Conversation wiedergefunden und ohne erneute Konfiguration oder doppelte Ausführung abgeschlossen; erst neue Aufrufe wechseln in die isolierte Agent-Conversation. Bereits als erfolgreich gespeicherte Schritte werden übersprungen. Da ein Prozess zwischen externer Nebenwirkung und Checkpoint abstürzen kann, sind Shell-Schritte im Zweifel **at-least-once** und sollten idempotent sein. Es gibt noch keine Parallelität oder automatische Trigger-Ausführung.
 
@@ -172,3 +172,20 @@ für Skill-Struktur und fokussierte Checklisten dienten
 und [PostgreSQL Code Review](https://github.com/github/awesome-copilot/blob/main/skills/postgresql-code-review/SKILL.md)
 aus GitHubs Awesome Copilot; deren framework-/datenbankspezifische Anweisungen werden
 hier nicht übernommen.
+
+### Human checkpoints
+
+A step can use `human: {prompt: "Approve?", choices: [approved, rejected]}`
+ instead of `run` or `agent`. Choices become the result `status`, suitable for
+`transitions`; without choices, free text returns status `completed`. Results
+also expose `response` and `summary` for `${{ steps.<id>.response }}`.
+
+The CLI prompts on a terminal. Non-interactive runs stop at the durable checkpoint
+with an error rather than guessing. Resume with `bun run factory run <pipeline>
+--human-response=approved` (one pending response per invocation). Pi displays
+`pending-input` and opens a selector or text input. Cancel or interrupt to leave
+the checkpoint unanswered, then `/factory resume`. Invalid or missing responses
+do not advance. Accepted responses are journaled as completed step results before
+transitions or downstream work, and reused on replay; submissions are scoped to
+the pending step/visit. As with shell steps generally, external shell side effects
+must themselves be idempotent across process interruption.

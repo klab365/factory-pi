@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { describe, expect, test } from "bun:test";
+import { parse, stringify } from "yaml";
 
 const repository = resolve(import.meta.dir, "..");
 function runCli(cwd: string, ...args: string[]) {
@@ -129,4 +130,60 @@ steps:
       },
     );
   });
+});
+
+test("software-factory sends requested human changes to the next builder visit", () => {
+  const pipeline = parse(readFileSync(`${repository}/.factory/pipelines/software-factory.yml`, "utf8"));
+  const [builder, reviewer, ...humanSteps] = pipeline.steps;
+  // Keep the real task template and human transitions, but avoid model calls.
+  pipeline.steps = [
+    {
+      id: builder.id,
+      maxVisits: builder.maxVisits,
+      transitions: builder.transitions,
+      run: `cat > builder-task <<'FACTORY_TASK'\n${builder.task}\nFACTORY_TASK`,
+    },
+    {
+      id: reviewer.id,
+      maxVisits: reviewer.maxVisits,
+      transitions: { completed: reviewer.transitions.approved },
+      run: "true",
+    },
+    ...humanSteps,
+  ];
+  fixture(stringify(pipeline), (root) => {
+    const start = runCli(root, "run", "test", "--goal=Test the loop");
+    expect(start.output).toContain("Human response required");
+    const request = runCli(root, "run", "test", "--human-response=change_requested");
+    expect(request.output).toContain("Another human response is required");
+    expect(readFileSync(`${root}/builder-task`, "utf8")).not.toContain("Add a regression test");
+    const feedback = runCli(root, "run", "test", "--human-response=Add a regression test");
+    expect(feedback.output).toContain("Another human response is required");
+    expect(readFileSync(`${root}/builder-task`, "utf8")).toContain("Add a regression test");
+    expect(runCli(root, "run", "test", "--human-response=approved").exitCode).toBe(0);
+  });
+});
+
+test("human checkpoint resumes and does not repeat downstream side effects", () => {
+  fixture(
+    `steps:
+  - id: approve
+    human:
+      prompt: Approve?
+      choices: [approved, rejected]
+    transitions: {approved: publish, rejected: end}
+  - id: publish
+    run: echo published >> effects
+`,
+    (root) => {
+      const pending = runCli(root, "run", "test");
+      expect(pending.exitCode).toBe(1);
+      expect(pending.output).toContain("Human response required");
+      expect(existsSync(`${root}/effects`)).toBe(false);
+      expect(runCli(root, "run", "test", "--human-response=invalid").exitCode).toBe(1);
+      const accepted = runCli(root, "run", "test", "--human-response=approved");
+      expect(accepted.exitCode).toBe(0);
+      expect(readFileSync(`${root}/effects`, "utf8")).toBe("published\n");
+    },
+  );
 });

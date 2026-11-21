@@ -97,6 +97,14 @@ export default function factoryExtension(pi: ExtensionAPI) {
           );
         },
         controller.signal,
+        {
+          human: async (prompt) => {
+            if (!ctx.hasUI) throw new Error("Human input requires interactive Pi");
+            return prompt.choices
+              ? ctx.ui.select(prompt.prompt, prompt.choices)
+              : ctx.ui.input(prompt.prompt);
+          },
+        },
       );
       await activeRun;
       saveRun(ctx.cwd, { ...run, status: "completed", pending: undefined });

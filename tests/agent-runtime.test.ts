@@ -42,7 +42,7 @@ describe("durable agent transitions", () => {
     expect(toolNames("reviewer")).toContain("handoff_reviewer_to_builder");
     expect(toolNames("reviewer")).not.toContain("handoff_builder_to_reviewer");
     expect(runtime.agentChange("reviewer").instructions).toContain("approved, changes_requested");
-    expect(pipeline.steps[1].transitions).toEqual({ approved: "end", changes_requested: "implement" });
+    expect(pipeline.steps[1].transitions).toEqual({ approved: "accept", changes_requested: "implement" });
   });
 });
 

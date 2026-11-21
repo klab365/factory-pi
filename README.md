@@ -71,6 +71,14 @@ In Pi:
   unterbrochener Läufe; bei leerer Auswahl eine Fehlermeldung.
 - `/factory refine [runId]`: abgeschlossenen Lauf auswählen, Zusatzanweisung im Editor
   eingeben und eine weitere Runde derselben Pipeline/Agent-Conversations starten.
+  Ohne ID werden nur abgeschlossene Läufe des aktuellen Worktrees angeboten; ein
+  einzelner Treffer wird direkt gewählt. Die Auswahl zeigt Ziel, Pipeline, Zeit und ID.
+  Neue Pi-Läufe speichern kanonische Repository- (Git-Common-Dir) und Worktree-Pfade,
+  außerhalb von Git den kanonischen Arbeitsordner. Symlinks und Git-Unterordner
+  werden normalisiert; nach Verschieben eines Checkouts gilt er als anderer Workspace.
+  Alte Katalogeinträge ohne Identität bleiben ohne ID ausgeblendet, sind aber mit
+  expliziter ID nutzbar. IDs mit bekannter fremder Worktree-Identität werden abgelehnt;
+  dafür Pi im ursprünglichen Worktree öffnen. `resume` bleibt unverändert.
   Visit-Limits gelten pro Runde. Unterbrochene Runden zuerst mit `resume` fortsetzen.
 - Jedes neue `run` erzeugt eine unabhängige benannte Pi-Session und neue
   Builder-/Reviewer-Conversations, auch wenn ein anderer Lauf unterbrochen ist.

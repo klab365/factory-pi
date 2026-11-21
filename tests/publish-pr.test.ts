@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
-const script = resolve(import.meta.dir, "../src/publish-pr.ts");
+const script = resolve(import.meta.dir, "../scripts/publish-pr.py");
 const url = "https://github.com/example/project/pull/1";
 
 test("publishing commits and pushes once on resume, then updates the same PR", () => {
@@ -57,7 +57,7 @@ esac
     const summary = "- Filter the picker by worktree.\n- Keep explicit run IDs working.";
     const verification = "- `mise run check` passed.";
     const run = (subject = title, checks = verification) =>
-      Bun.spawnSync([process.execPath, script, goal, subject, summary, checks], {
+      Bun.spawnSync(["python3", script, goal, subject, summary, checks], {
         cwd: root,
         env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, PR_STATE: state },
         stdout: "pipe",

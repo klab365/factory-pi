@@ -78,7 +78,7 @@ steps:
     name: Publish approved changes
     shell:
       command: >-
-        bun run src/publish-pr.ts
+        python3 scripts/publish-pr.py
         ${{ inputs.goal }}
         ${{ steps.review.prTitle }}
         ${{ steps.review.prSummary }}

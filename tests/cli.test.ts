@@ -134,8 +134,8 @@ steps:
 
 test("software-factory sends requested human changes to the next builder visit", () => {
   const pipeline = parse(readFileSync(`${repository}/.factory/pipelines/software-factory.yml`, "utf8"));
-  const [builder, reviewer, ...humanSteps] = pipeline.steps;
-  // Keep the real task template and human transitions, but avoid model calls.
+  const [builder, reviewer, accept, feedback, publish] = pipeline.steps;
+  // Keep the real task template and human transitions, but avoid model calls and pushes.
   pipeline.steps = [
     {
       id: builder.id,
@@ -149,7 +149,9 @@ test("software-factory sends requested human changes to the next builder visit",
       transitions: { completed: reviewer.transitions.approved },
       run: "true",
     },
-    ...humanSteps,
+    accept,
+    feedback,
+    { ...publish, run: "echo https://example.test/pr/1 >> published; cat published" },
   ];
   fixture(stringify(pipeline), (root) => {
     const start = runCli(root, "run", "test", "--goal=Test the loop");
@@ -160,8 +162,36 @@ test("software-factory sends requested human changes to the next builder visit",
     const feedback = runCli(root, "run", "test", "--human-response=Add a regression test");
     expect(feedback.output).toContain("Another human response is required");
     expect(readFileSync(`${root}/builder-task`, "utf8")).toContain("Add a regression test");
-    expect(runCli(root, "run", "test", "--human-response=approved").exitCode).toBe(0);
+    expect(existsSync(`${root}/published`)).toBe(false);
+    const approved = runCli(root, "run", "test", "--human-response=approved");
+    expect(approved.exitCode).toBe(0);
+    expect(approved.output).toContain("https://example.test/pr/1");
+    expect(readFileSync(`${root}/published`, "utf8")).toBe("https://example.test/pr/1\n");
   });
+  fixture(stringify(pipeline), (root) => {
+    const rejected = runCli(root, "run", "test", "--goal=Reject", "--human-response=rejected");
+    expect(rejected.exitCode).toBe(0);
+    expect(existsSync(`${root}/published`)).toBe(false);
+  });
+});
+
+test("opt-in shell output is available from the durable result after resume", () => {
+  fixture(
+    `steps:
+  - id: capture
+    run: printf 'https://example.test/pr/1\\n'
+    captureOutput: true
+  - id: retry
+    run: 'if [ ! -e retried ]; then touch retried; exit 1; fi; printf "%s" \${{ steps.capture.output }} > url'
+`,
+    (root) => {
+      expect(runCli(root, "run", "test").exitCode).toBe(1);
+      const resumed = runCli(root, "run", "test");
+      expect(resumed.exitCode).toBe(0);
+      expect(resumed.output).not.toContain("▶ capture");
+      expect(readFileSync(`${root}/url`, "utf8")).toBe("https://example.test/pr/1");
+    },
+  );
 });
 
 test("human checkpoint resumes and does not repeat downstream side effects", () => {

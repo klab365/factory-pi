@@ -42,10 +42,10 @@ steps:
     name: Human acceptance
     maxVisits: 3
     human:
-      prompt: Accept the reviewed implementation?
+      prompt: Approve the reviewed changes, commit and push this branch, and open or update its PR?
       choices: [approved, change_requested, rejected]
     transitions:
-      approved: end
+      approved: publish
       change_requested: human_feedback
       rejected: end
 
@@ -56,3 +56,10 @@ steps:
       prompt: What should the builder change?
     transitions:
       completed: implement
+
+  - id: publish
+    name: Publish approved changes
+    run: bun run src/publish-pr.ts ${{ inputs.goal }}
+    captureOutput: true
+    transitions:
+      completed: end

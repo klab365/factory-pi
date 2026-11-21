@@ -69,19 +69,29 @@ async function recordStep(
   }
 }
 
-async function runCommand(command: string, label: string): Promise<void> {
+async function runCommand(command: string, label: string, captureOutput: boolean): Promise<string> {
   console.log(`\n▶ ${label}: ${command}`);
   const proc = Bun.spawn(["bash", "-lc", command], {
     cwd: root,
-    stdout: eventSink ? "pipe" : "inherit",
+    stdout: eventSink || captureOutput ? "pipe" : "inherit",
     stderr: "inherit",
     stdin: "inherit",
   });
-  if (eventSink && proc.stdout) {
-    for await (const chunk of proc.stdout) emit("output", { text: new TextDecoder().decode(chunk) });
+  let output = "";
+  if (proc.stdout) {
+    const decoder = new TextDecoder();
+    const display = (text: string) => {
+      if (!text) return;
+      if (eventSink) emit("output", { text });
+      else process.stdout.write(text);
+      if (captureOutput) output += text;
+    };
+    for await (const chunk of proc.stdout) display(decoder.decode(chunk, { stream: true }));
+    display(decoder.decode());
   }
   const code = await proc.exited;
   if (code !== 0) fail(`Step '${label}' failed with exit code ${code}`);
+  return output.trimEnd();
 }
 
 type PipelineCursor = { stepId: string; visit: number; visits: Record<string, number> };
@@ -136,8 +146,17 @@ async function executePipeline(
       await recordStep(journal, key, stepId, visit, "started");
       try {
         if (typeof step.run === "string") {
-          await runCommand(interpolate(step.run, inputs, true, stepResults), label);
-          result = { status: "completed", summary: "Command completed" };
+          const captureOutput = step.captureOutput === true;
+          const output = await runCommand(
+            interpolate(step.run, inputs, true, stepResults),
+            label,
+            captureOutput,
+          );
+          result = {
+            status: "completed",
+            summary: "Command completed",
+            ...(captureOutput ? { output } : {}),
+          };
         } else if (typeof step.agent === "string") {
           const task = interpolate(string(step.task, `Step '${label}' task`), inputs, false, stepResults);
           console.log(`\n▶ ${label} (${step.agent}, visit ${visit})`);
@@ -289,6 +308,12 @@ function validatePipeline(name: string, announce = true): void {
     ids.add(id);
     if ([step.run, step.agent, step.human].filter((value) => value !== undefined).length !== 1) {
       fail(`Pipeline step '${id}' must define exactly one of 'run', 'agent', or 'human'`);
+    }
+    if (
+      step.captureOutput !== undefined &&
+      (step.run === undefined || typeof step.captureOutput !== "boolean")
+    ) {
+      fail(`Pipeline step '${id}' captureOutput must be a boolean on a 'run' step`);
     }
     if (step.run !== undefined) {
       string(step.run, `Pipeline step '${id}' run`);

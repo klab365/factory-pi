@@ -53,7 +53,10 @@ test("Factory tool validates session and pending IDs, streams events, rejects du
     await expect(invoke()).rejects.toThrow("pending");
     expect(entries).toHaveLength(0);
     mkdirSync(resolve(root, ".factory/pipelines"), { recursive: true });
-    writeFileSync(resolve(root, ".factory/pipelines/test.yml"), "steps:\n  - id: work\n    run: sleep 10\n");
+    writeFileSync(
+      resolve(root, ".factory/pipelines/test.yml"),
+      "steps:\n  - id: work\n    shell: sleep 10\n",
+    );
     saveRun(root, run);
     const controller = new AbortController();
     const updates: unknown[] = [];

@@ -11,7 +11,7 @@ test("Pi replacement loads fresh extension, names session and persists context-f
   mkdirSync(resolve(root, ".factory/pipelines"), { recursive: true });
   writeFileSync(
     resolve(root, ".factory/pipelines/test.yml"),
-    `inputs:\n  goal: {}\nsteps:\n  - id: work\n    run: echo \${{ inputs.goal }} >> output\n`,
+    `inputs:\n  goal: {}\nsteps:\n  - id: work\n    shell: echo \${{ inputs.goal }} >> output\n`,
   );
   const extension = resolve(root, "extension.ts");
   writeFileSync(
@@ -119,7 +119,7 @@ test("Pi replacement loads fresh extension, names session and persists context-f
     expect(readRuns(root)[0].sessionFile).toBe(first.sessionFile);
     writeFileSync(
       resolve(root, ".factory/pipelines/test.yml"),
-      `inputs:\n  goal: {}\nsteps:\n  - id: work\n    run: test ! -f stop && echo \${{ inputs.goal }} >> output\n`,
+      `inputs:\n  goal: {}\nsteps:\n  - id: work\n    shell: test ! -f stop && echo \${{ inputs.goal }} >> output\n`,
     );
     writeFileSync(resolve(root, "stop"), "");
     await command("run-two", "/factory run test");

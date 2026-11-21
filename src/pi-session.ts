@@ -115,7 +115,8 @@ export async function runChild(
   const child = spawn(options.command ?? "bun", options.args ?? ["run", cli, "session"], {
     cwd: root,
     stdio: ["pipe", "pipe", "pipe"],
-    // A dedicated POSIX process group includes the CLI's shell steps and descendants.
+    // A dedicated POSIX process group allows runner-wide cleanup; the CLI relays signals to
+    // detached shell groups and cleans up their descendants before this group is escalated.
     // Do not pass signal to spawn: its immediate-child abort can settle before cleanup.
     detached: process.platform !== "win32",
   });
@@ -141,11 +142,11 @@ export async function runChild(
     kill("SIGTERM");
     stopping = new Promise<void>((done) => {
       setTimeout(() => {
-        // Escalate even if the group leader already exited: descendants may ignore TERM
-        // and may have closed their inherited pipes, allowing 'close' to fire early.
+        // The CLI uses a separate process group for shell descendants and needs time to clean it up.
+        // Still escalate if the leader exited: descendants may ignore TERM and close inherited pipes.
         kill("SIGKILL");
         done();
-      }, 300);
+      }, 1000);
     });
   };
   const abort = () => {

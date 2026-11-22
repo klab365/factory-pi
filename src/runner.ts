@@ -1,4 +1,4 @@
-import { shellSpec, validatePipeline, type ShellSpec } from "./pipeline-validation";
+import { shellSpec, stepMaxVisits, validatePipeline, type ShellSpec } from "./pipeline-validation";
 import { createAgentRuntime } from "./agent-runtime";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { openJournal, appendEvent, type DurableJournal } from "./journal";
@@ -256,10 +256,9 @@ async function executePipeline(
     const nextStep = stepById.get(target);
     if (!nextStep) throw new Error(`Transition from '${stepId}' targets unknown step '${target}'`);
     const nextVisit = (active.visits[target] ?? 0) + 1;
-    const maxVisits = typeof nextStep.maxVisits === "number" ? nextStep.maxVisits : 1;
-    if (!Number.isInteger(maxVisits) || maxVisits < 1)
-      throw new Error(`Step '${target}' maxVisits must be a positive integer`);
-    if (nextVisit > maxVisits) throw new Error(`Step '${target}' exceeded maxVisits (${maxVisits})`);
+    const maxVisits = stepMaxVisits(nextStep, target);
+    if (maxVisits !== undefined && nextVisit > maxVisits)
+      throw new Error(`Step '${target}' exceeded maxVisits (${maxVisits})`);
     const visits = { ...active.visits, [target]: nextVisit };
     current = { stepId: target, visit: nextVisit, visits };
     await saveCursor(journal, current);

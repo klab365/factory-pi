@@ -1,8 +1,23 @@
+import { spyOn } from "bun:test";
+import { appendFileSync } from "node:fs";
+import * as agentRuntime from "../../src/agent-runtime";
 import { validatePipeline } from "../../src/pipeline-validation";
 import { runPipeline } from "../../src/runner";
 
 // Test-only entry point for runner cases that do not need a Pi session.
-const [command, name, ...args] = Bun.argv.slice(2);
+const [command, name, ...rawArgs] = Bun.argv.slice(2);
+const args = rawArgs.filter((arg) => arg !== "--stub-agents");
+if (rawArgs.includes("--stub-agents")) {
+  const createRuntime = agentRuntime.createAgentRuntime;
+  spyOn(agentRuntime, "createAgentRuntime").mockImplementation((...parameters) => {
+    const runtime = createRuntime(...parameters);
+    runtime.runAgent = async (_conversation, agent, _task, requestId) => {
+      appendFileSync("agent-visits", `${agent} ${requestId}\n`);
+      return { status: "completed" };
+    };
+    return runtime;
+  });
+}
 try {
   if (command === "validate") {
     validatePipeline(process.cwd(), name);

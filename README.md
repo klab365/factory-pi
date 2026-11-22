@@ -2,6 +2,104 @@
 
 Pipelines liegen unter `.factory/pipelines/` und enthalten Shell-Schritte (`shell`) oder Pi-Durable-Agent-Schritte (`agent` + `task`). Agent-Instruktionen liegen unter `.factory/agents/` als Markdown mit YAML-Frontmatter (`name`, `description`, `model`, `thinking`, `tools`, optional `skills`). Agents laufen als Conversations im pi-durable-Harness und verwenden die Coding-Tools des Harness.
 
+## Installation und Verwendung in anderen Repositories
+
+### Standalone (ohne installiertes Bun oder Node)
+
+GitHub-Releases enthalten einzelne ausführbare Dateien für Linux und macOS,
+jeweils x64 und arm64. Die Bun-Laufzeit und JavaScript-Abhängigkeiten sind
+bereits eingebettet. Beispiel für Linux x64 nach Veröffentlichung:
+
+```sh
+mkdir -p "$HOME/.local/bin"
+cd /tmp
+curl -fLO https://github.com/klab365/factory-pi/releases/latest/download/factory-linux-x64
+curl -fLO https://github.com/klab365/factory-pi/releases/latest/download/factory-linux-x64.sha256
+shasum -a 256 -c factory-linux-x64.sha256
+chmod +x factory-linux-x64
+mv factory-linux-x64 "$HOME/.local/bin/factory"
+export PATH="$HOME/.local/bin:$PATH"
+cd /pfad/zum/zielprojekt
+factory init
+factory run hello
+```
+
+Für macOS oder arm64 den Asset-Namen entsprechend ersetzen. Updates erfolgen
+über denselben Download mit Prüfsummenprüfung; für reproduzierbare Installationen
+`releases/latest/download` durch `releases/download/<tag>` ersetzen.
+Shell-Pipelines benötigen weiterhin `bash` sowie die im Projekt verwendeten
+Werkzeuge (z. B. Git). Provider-Zugangsdaten bleiben für Agent-Schritte nötig.
+Windows-Binaries werden derzeit nicht veröffentlicht.
+
+Zum lokalen Bauen: `bun install --frozen-lockfile && bun run build` erzeugt
+`dist/factory` für das Build-System. Nur der Build benötigt Bun.
+
+### npm / verlinkter Checkout
+
+Diese alternative Installation benötigt Bun auf `PATH` (siehe `mise.toml`
+für die getestete Version). Nach Veröffentlichung auf npm:
+
+```sh
+bun install -g pi-software-factory
+cd /pfad/zum/zielprojekt
+factory init
+factory run hello
+# Update:
+bun install -g pi-software-factory@latest
+```
+
+`factory init` erstellt `.factory/pipelines/hello.yml`, falls noch keine
+YAML-Pipeline existiert, sowie `.factory/agents/` und eine lokale Ignore-Datei
+für `state/`. Vorhandene Dateien bleiben unverändert; alle `.yml`-Pipelines
+werden validiert (Fehler führen zu Exit-Code 1). Der Starter benötigt weder
+Modell noch Credentials. Eigene Agents und Pipelines gehören ins Zielprojekt;
+der repository-spezifische `software-factory`-Workflow wird nicht kopiert.
+
+Pi entdeckt die Extension über die Paket-Metadaten:
+
+```sh
+pi install npm:pi-software-factory
+# Updates der Pi-Pakete:
+pi update
+```
+
+Pi selbst muss separat installiert sein. Zum Verwenden der Standalone-Laufzeit
+mit der npm-installierten Pi-Extension (ohne Bun) den absoluten Binary-Pfad setzen:
+
+```sh
+export FACTORY_BIN="$HOME/.local/bin/factory"
+pi
+```
+
+Ohne `FACTORY_BIN` verwendet die Extension weiterhin `bun` für den Quellcode-Runner.
+Der Pfad muss auf eine vertrauenswürdige Factory-Binary zeigen. Pi anschließend
+im Zielprojekt starten. Alternativ ohne Veröffentlichung:
+
+```sh
+cd /pfad/zum/factory-pi
+bun install --frozen-lockfile
+bun link
+cd /pfad/zum/zielprojekt
+factory init
+pi -e /pfad/zum/factory-pi/src/pi-extension.ts
+```
+
+Installation und Projekt sind getrennt: CLI und Extension laden Code aus dem
+installierten Paket, aber Konfiguration, Shell-Arbeitsverzeichnis und Zustand
+immer aus dem aktuellen Zielprojekt (`.factory/`). Für ein Update eines
+verlinkten Checkouts dort `git pull` und `bun install --frozen-lockfile` ausführen.
+
+### Releases
+
+Conventional Commits auf `main` steuern Release Please in `.github/workflows/cd.yml`.
+Der Release-PR aktualisiert Version und Changelog; nach dem Merge werden ein
+GitHub-Release und nach erfolgreichen Checks das npm-Paket veröffentlicht.
+Native Runner bauen und testen zusätzlich Standalone-Binaries ohne Bun auf dem
+Runtime-PATH und laden sie inklusive SHA-256-Prüfsumme zum Release hoch.
+Dafür `NPM_TOKEN` mit Publish-Rechten als Repository-Secret konfigurieren.
+Optional `RELEASE_PLEASE_TOKEN` (PAT/App-Token) setzen, damit Release-PRs auch
+weitere GitHub-Workflows auslösen; GitHub muss PR-Erstellung durch Actions erlauben.
+
 ## Voraussetzungen
 
 ```sh

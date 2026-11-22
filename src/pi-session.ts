@@ -147,14 +147,20 @@ export async function runChild(
 ): Promise<void> {
   signal?.throwIfAborted();
   const cli = fileURLToPath(new URL("./cli.ts", import.meta.url));
-  const child = spawn(options.command ?? "bun", options.args ?? ["run", cli, "session"], {
-    cwd: root,
-    stdio: ["pipe", "pipe", "pipe"],
-    // A dedicated POSIX process group allows runner-wide cleanup; the CLI relays signals to
-    // detached shell groups and cleans up their descendants before this group is escalated.
-    // Do not pass signal to spawn: its immediate-child abort can settle before cleanup.
-    detached: process.platform !== "win32",
-  });
+  // An explicitly installed standalone runtime does not require Bun on PATH.
+  const binary = process.env.FACTORY_BIN;
+  const child = spawn(
+    options.command ?? binary ?? "bun",
+    options.args ?? (binary ? ["session"] : ["run", cli, "session"]),
+    {
+      cwd: root,
+      stdio: ["pipe", "pipe", "pipe"],
+      // A dedicated POSIX process group allows runner-wide cleanup; the CLI relays signals to
+      // detached shell groups and cleans up their descendants before this group is escalated.
+      // Do not pass signal to spawn: its immediate-child abort can settle before cleanup.
+      detached: process.platform !== "win32",
+    },
+  );
   let stopping: Promise<void> | undefined;
   let failure: unknown;
   let completed = false;

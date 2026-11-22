@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { initProject } from "./init";
 import { createAgentRuntime, loadAgentDefinition } from "./agent-runtime";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { openJournal, appendEvent, type DurableJournal } from "./journal";
@@ -487,7 +488,11 @@ function validatePipeline(name: string, announce = true): void {
 if (import.meta.main) {
   const [command, target, ...args] = Bun.argv.slice(2);
   try {
-    if (command === "session") {
+    if (command === "init") {
+      if (target) fail("Usage: factory init");
+      for (const name of initProject(root)) validatePipeline(name);
+      console.log(`Factory initialized in ${root}`);
+    } else if (command === "session") {
       const lines = createInterface({ input: process.stdin });
       const iterator = lines[Symbol.asyncIterator]();
       const first = await iterator.next();
@@ -519,7 +524,7 @@ if (import.meta.main) {
     else if (command === "run" && target) await runPipeline(target, args);
     else {
       console.error(
-        "Usage: factory run <pipeline-name> [--input <value>] | factory validate <pipeline-name>",
+        "Usage: factory init | factory run <pipeline-name> [--input <value>] | factory validate <pipeline-name>",
       );
       process.exitCode = 2;
     }

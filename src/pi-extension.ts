@@ -2,7 +2,7 @@ import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { existsSync } from "node:fs";
-import { initProject, listPipelines } from "./init";
+import { initProject, listPipelines, setupPrompt } from "./init";
 import { validatePipeline } from "./pipeline-validation";
 import {
   chooseRun,
@@ -154,8 +154,10 @@ export default function factoryExtension(pi: ExtensionAPI) {
         const { command, target } = parseCommand(args);
         await ctx.waitForIdle();
         if (command === "init") {
+          if (!ctx.model) throw new Error("Select a model with /model before /factory init");
           for (const name of initProject(root)) validatePipeline(root, name);
-          ctx.ui.notify(`Factory initialized in ${root}`, "info");
+          pi.sendUserMessage(setupPrompt(ctx.model));
+          ctx.ui.notify(`Factory initialized in ${root}; project setup requested in Pi`, "info");
           return;
         }
         if (command === "run" || command === "validate") {

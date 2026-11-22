@@ -79,7 +79,7 @@ esac
     const firstCommit = git("rev-parse", "HEAD");
     expect(git("log", "-1", "--format=%s")).toBe(title);
     expect(readFileSync(`${state}.body`, "utf8")).toBe(
-      `## Summary\n${summary}\n\nCloses #12\n\n## Verification\n${verification}\n`,
+      `## Summary\n${summary}\n\n## Verification\n${verification}\n\nClose #12\n`,
     );
     expect(git("--git-dir", remote, "rev-parse", "refs/heads/feature/test")).toBe(firstCommit);
     const resumed = run();

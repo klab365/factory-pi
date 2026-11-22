@@ -2,3 +2,6 @@ node_modules/
 .factory/state/*
 !.factory/state/.gitkeep
 dist/
+
+# Generated documentation site
+_site/

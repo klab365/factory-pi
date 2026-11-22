@@ -32,7 +32,7 @@
     "typescript": "^7.0.2",
     "unist-util-visit": "^5.1.0"
   },
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Pi extension for resumable project-local workflows",
   "files": [
     "src",

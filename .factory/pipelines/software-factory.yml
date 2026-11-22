@@ -39,14 +39,16 @@ steps:
       and put actionable fixes in `feedback`.
 
       When approved, include three string fields in the factory-result JSON:
-      - `prTitle`: an English imperative title for both the PR and the commit subject,
-        on one line, at most 72 characters, describing the actual change. Do not copy
-        the request, issue URL, or a generic title.
+      - `prTitle`: a Conventional Commit subject used as both the PR title and commit
+        subject, matching `<type>(<optional scope>): <imperative summary>` (for example,
+        `fix(release): use staged npm publishing`). Keep it on one line, at most 72
+        characters, and accurately describe the change. Do not copy the request, issue
+        URL, or use a generic title.
       - `prSummary`: Markdown bullets describing the changes in the diff.
       - `prVerification`: Markdown bullets with the checks actually run and their results.
 
-      Do not include issue-closing directives in any of these fields.
-      The publishing script appends them based on issue URLs in the goal.
+      Do not include issue-closing directives in any of these fields; the publisher agent
+      adds them based on issue URLs in the goal.
 
   - id: accept
     name: Human acceptance
@@ -78,13 +80,18 @@ steps:
 
   - id: publish
     name: Publish approved changes
-    shell:
-      command: >-
-        python3 scripts/publish-pr.py
-        ${{ inputs.goal }}
-        ${{ steps.review.prTitle }}
-        ${{ steps.review.prSummary }}
-        ${{ steps.review.prVerification }}
-      outputs: {stdout: true}
+    agent: publisher
+    task: |-
+      The human has approved publishing the reviewed changes. Commit, push, and create or
+      update the pull request following your instructions.
+
+      Goal: ${{ inputs.goal }}
+      Approved Conventional Commit subject / PR title: ${{ steps.review.prTitle }}
+
+      ## Approved summary
+      ${{ steps.review.prSummary }}
+
+      ## Approved verification
+      ${{ steps.review.prVerification }}
     transitions:
       completed: end

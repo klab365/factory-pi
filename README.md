@@ -47,6 +47,22 @@ In Pi, select a model and run:
 
 Use `/factory resume` to continue an interrupted run or `/factory refine` to start a follow-up round of a completed one. Pi needs a configured model to start the run, even when the pipeline only contains shell and human steps. Factory's built-in `agent:` steps also use Pi Durable; see the [syntax reference](docs/syntax.md) for a complete agent example.
 
+## Set up Factory for a repository
+
+To tailor Factory to an existing project, open that repository in Pi with Factory installed and paste this prompt into the coding agent. It interviews you before proposing configuration, then waits for approval before creating or changing files.
+
+```text
+Help me set up Factory for this repository. Interview me first; do not edit files until I approve your proposed configuration.
+
+Start by inspecting the repository structure, existing project documentation, package/build/test configuration, and any existing `.factory/` pipelines and agents or `.agents/skills/`. Do not assume a framework, command, workflow, or convention that you have not found or confirmed.
+
+Interview me one focused question at a time. Ask follow-up questions when an answer is ambiguous or exposes an important decision. Cover the outcomes I want automated, the steps and order, checks and commands, review or human approval points, which work should be handled by separate agents, each agent's responsibilities and tool access, reusable skills, and any integrations or secrets needed. Tailor questions to the repository; skip anything that is already clear from inspection. Let me say “you decide” and state your assumptions. Continue until the design is specific enough to implement without guessing.
+
+Then summarize the proposed workflow and list every file you would create or change, explaining its purpose. Include appropriate `.factory/pipelines/*.yml`, `.factory/agents/*.md`, and `.agents/skills/<skill-name>/SKILL.md` files. Follow the Factory syntax reference at https://github.com/klab365/factory-pi/blob/main/docs/syntax.md; use only supported pipeline fields and ensure agent skill references point to skills you create. Reuse existing conventions and configuration where appropriate. Do not rely on an `AGENTS.md` file for Factory-specific behavior.
+
+Ask me to approve this plan. If I request changes, revise the plan and ask again. After approval, create the files. Never overwrite or delete existing project files without asking me first; preserve unrelated content. Finally, summarize the files created or changed, note assumptions and any setup still needed, and give me the `/factory validate <pipeline-name>` commands to validate each generated pipeline.
+```
+
 ## Documentation
 
 | Page | What it covers |

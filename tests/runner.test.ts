@@ -164,7 +164,9 @@ test("software-factory sends requested human changes to the next builder visit",
     accept,
     feedback,
     {
-      ...publish,
+      id: publish.id,
+      name: publish.name,
+      transitions: publish.transitions,
       shell: {
         command: "echo https://example.test/pr/1 >> published; cat published",
         outputs: { stdout: true },

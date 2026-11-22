@@ -2,7 +2,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve, isAbsolute, relative, sep } from "node:path";
 import { parse } from "yaml";
-import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
 import { obj, opt, str } from "@earendil-works/pi-schema";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import {
@@ -18,6 +18,8 @@ import { PiCredentialStore } from "./pi-credentials";
 import { loadSkills, skillInstructions, type SkillDefinition } from "./skills";
 
 type RecordValue = Record<string, unknown>;
+class InvalidAgentOutcome extends Error {}
+type ReplyChannel = Pick<Conversation, "submit" | "commit">;
 export type AgentDefinition = {
   name: string;
   description?: string;
@@ -168,6 +170,95 @@ export function createAgentRuntime(root: string, pipeline: RecordValue): AgentRu
     };
   };
 
+  const parseOutcome = (agentName: string, text: string): AgentOutcome => {
+    const match = text.match(/<factory-result>\s*([\s\S]*?)\s*<\/factory-result>\s*$/);
+    if (!match) throw new InvalidAgentOutcome(`Agent '${agentName}' did not return a <factory-result> block`);
+    let result: unknown;
+    try {
+      result = JSON.parse(match[1]);
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      throw new InvalidAgentOutcome(`Agent '${agentName}' returned invalid JSON in <factory-result>`);
+    }
+    if (
+      !result ||
+      typeof result !== "object" ||
+      Array.isArray(result) ||
+      !("status" in result) ||
+      typeof result.status !== "string"
+    ) {
+      throw new InvalidAgentOutcome(
+        `Agent '${agentName}' returned an invalid factory result (expected an object with a string status)`,
+      );
+    }
+    if (!(outcomes.get(agentName) ?? new Set(["completed"])).has(result.status)) {
+      throw new InvalidAgentOutcome(`Agent '${agentName}' returned an undeclared status`);
+    }
+    return result as AgentOutcome;
+  };
+
+  const readReply = async (
+    conversation: ReplyChannel,
+    task: string,
+    requestId: string,
+    context: Context,
+    label: string,
+  ) => {
+    const submission = await conversation.submit({ type: "input", content: task, requestId }, context);
+    const settled = await submission.wait(context);
+    if (settled.status !== "done" || settled.type !== "input") {
+      throw new Error(`${label} did not complete: ${settled.status}`);
+    }
+    const answer = await conversation.commit((tx) => tx.entry(AssistantEntry, settled.answer), context);
+    return (
+      answer?.model
+        ?.flatMap((message) =>
+          Array.isArray(message.content)
+            ? message.content.flatMap((part) =>
+                part && typeof part === "object" && "type" in part && part.type === "text" && "text" in part
+                  ? [String(part.text)]
+                  : [],
+              )
+            : [],
+        )
+        .join("\n") ?? ""
+    );
+  };
+
+  const requestOutcome = async (
+    conversation: ReplyChannel,
+    agentName: string,
+    task: string,
+    requestId: string,
+    context: Context,
+    label: string,
+  ) => {
+    const text = await readReply(conversation, task, requestId, context, label);
+    try {
+      return { text, outcome: parseOutcome(agentName, text) };
+    } catch (error) {
+      if (!(error instanceof InvalidAgentOutcome)) throw error;
+      const statuses = [...(outcomes.get(agentName) ?? new Set(["completed"]))].join(", ");
+      const correction = await readReply(
+        conversation,
+        `Your previous reply could not be accepted: ${error.message}. ` +
+          `Do not repeat the task or call tools. Based on your previous work, reply only with a <factory-result>JSON</factory-result> block. ` +
+          `Use a JSON object with a string status (${statuses}) and a concise summary. Include actionable feedback when requesting changes.`,
+        `${requestId}:factory-result-repair`,
+        context,
+        `${label} (result correction)`,
+      );
+      try {
+        return { text: correction, outcome: parseOutcome(agentName, correction) };
+      } catch (correctionError) {
+        if (!(correctionError instanceof InvalidAgentOutcome)) throw correctionError;
+        throw new Error(`${correctionError.message} after one correction request`, {
+          cause: correctionError,
+        });
+      }
+    }
+  };
+
   for (const [source, targets] of allowed) {
     for (const target of targets) {
       const tool = defineTool({
@@ -188,37 +279,14 @@ export function createAgentRuntime(root: string, pipeline: RecordValue): AgentRu
           await api.details({ handoff: `${source} -> ${target}`, conversationId: childId }, context);
           const child = await api.conversation(childId, context);
           if (!child) throw new Error(`Could not open handoff conversation for '${target}'`);
-          const requestId = `handoff-${api.taskId}`;
-          const submission = await child.submit(
-            {
-              type: "input",
-              content: `Task from ${source}: ${args.task}\n\nContext:\n${args.context ?? "(none provided)"}`,
-              requestId,
-            },
+          const { text } = await requestOutcome(
+            { submit: child.submit.bind(child), commit: api.commit.bind(api) },
+            target,
+            `Task from ${source}: ${args.task}\n\nContext:\n${args.context ?? "(none provided)"}`,
+            `handoff-${api.taskId}`,
             context,
+            `Handoff to '${target}'`,
           );
-          const settled = await submission.wait(context);
-          if (settled.status !== "done" || settled.type !== "input") {
-            throw new Error(`Handoff to '${target}' did not complete: ${settled.status}`);
-          }
-          const answer = await api.commit((tx) => tx.entry(AssistantEntry, settled.answer), context);
-          const text =
-            answer?.model
-              ?.flatMap((message) =>
-                Array.isArray(message.content)
-                  ? message.content.flatMap((part) =>
-                      part &&
-                      typeof part === "object" &&
-                      "type" in part &&
-                      part.type === "text" &&
-                      "text" in part
-                        ? [String(part.text)]
-                        : [],
-                    )
-                  : [],
-              )
-              .join("\n") ?? "";
-          parseOutcome(target, text);
           return { output: [{ type: "text", text }] };
         },
       });
@@ -231,26 +299,6 @@ export function createAgentRuntime(root: string, pipeline: RecordValue): AgentRu
       );
     }
   }
-
-  const parseOutcome = (agentName: string, text: string): AgentOutcome => {
-    const match = text.match(/<factory-result>\s*([\s\S]*?)\s*<\/factory-result>\s*$/);
-    if (!match) throw new Error(`Agent '${agentName}' did not return a <factory-result> block`);
-    const result: unknown = JSON.parse(match[1]);
-    if (
-      !result ||
-      typeof result !== "object" ||
-      Array.isArray(result) ||
-      typeof (result as RecordValue).status !== "string"
-    ) {
-      throw new Error(`Agent '${agentName}' returned an invalid factory result`);
-    }
-    if (!(outcomes.get(agentName) ?? new Set(["completed"])).has((result as RecordValue).status as string)) {
-      throw new Error(
-        `Agent '${agentName}' returned undeclared status '${String((result as RecordValue).status)}'`,
-      );
-    }
-    return result as AgentOutcome;
-  };
 
   const registry = createRegistry();
   registry.install(CodingTools);
@@ -269,31 +317,15 @@ export function createAgentRuntime(root: string, pipeline: RecordValue): AgentRu
       // Do not reconfigure an admitted turn: it can still be running, with its
       // original handoff children, or already answered but not checkpointed yet.
       if (!previous) await conversation.configure(changeFor(agentName), BACKGROUND_CONTEXT);
-      const submission = await conversation.submit(
-        { type: "input", content: task, requestId },
+      const { outcome } = await requestOutcome(
+        conversation,
+        agentName,
+        task,
+        requestId,
         BACKGROUND_CONTEXT,
+        `Agent '${agentName}'`,
       );
-      const settled = await submission.wait(BACKGROUND_CONTEXT);
-      if (settled.status !== "done" || settled.type !== "input") {
-        throw new Error(`Agent '${agentName}' did not complete: ${settled.status}`);
-      }
-      const answer = await conversation.commit(
-        (tx) => tx.entry(AssistantEntry, settled.answer),
-        BACKGROUND_CONTEXT,
-      );
-      const text =
-        answer?.model
-          ?.flatMap((message) =>
-            Array.isArray(message.content)
-              ? message.content.flatMap((part) =>
-                  part && typeof part === "object" && "type" in part && part.type === "text" && "text" in part
-                    ? [String(part.text)]
-                    : [],
-                )
-              : [],
-          )
-          .join("\n") ?? "";
-      return parseOutcome(agentName, text);
+      return outcome;
     },
   };
 }

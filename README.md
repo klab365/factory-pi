@@ -214,3 +214,42 @@ do not advance. Accepted responses are journaled as completed step results befor
 transitions or downstream work, and reused on replay; submissions are scoped to
 the pending step/visit. As with shell steps generally, external shell side effects
 must themselves be idempotent across process interruption.
+
+### Typed step outputs
+
+Named outputs are explicitly selected, never automatically copied from environment variables:
+
+```yaml
+steps:
+  - id: build
+    shell:
+      command: 'printf "dist/report.json"'
+      outputs: {stdout: true}
+    outputs:
+      report: {type: artifact, from: result.stdout}
+      exit: {type: number, from: result.exitCode}
+  - id: consume
+    shell: 'cat ${{ steps.build.outputs.report }}'
+```
+
+`outputs.<name>` requires `type` (`string`, `number`, `boolean`, or `artifact`)
+and `from: result.<field>` (nested agent-result fields are supported). Shell
+sources and their types, and named output references, are checked before running.
+References must name declared outputs whose producers complete on every path to
+the consumer (forward/self references and conditional bypasses are rejected).
+Agent result types are checked at the result boundary; missing or mistyped values
+fail the step, without coercion. Shell substitutions are quoted, and inserted
+values are never evaluated as further expressions. Legacy direct result
+references remain supported.
+
+An `artifact` is a nonempty relative path without `..`, not a file snapshot or
+upload; pipelines must retain the referenced file themselves. Selected command
+streams are limited to 64 KiB of UTF-8 combined (overflow fails and stops the command),
+and each JSON-encoded mapped output is limited to 64 KiB of UTF-8. Do not select
+streams/result fields containing secrets: explicit selection persists them in the journal.
+
+Mapped outputs live in the same durable completion checkpoint as the result.
+Resume uses the saved values without rerunning the producer or remapping its
+result. Refine starts a new round, so outputs are regenerated for that round;
+previous round checkpoints remain unchanged. As with other shell side effects,
+a failure before the completion checkpoint may rerun the command.

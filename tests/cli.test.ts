@@ -278,3 +278,153 @@ test("human checkpoint resumes and does not repeat downstream side effects", () 
     },
   );
 });
+
+test("typed outputs are restored on resume without repeating producers", () => {
+  fixture(
+    `steps:
+  - id: capture
+    shell:
+      command: 'echo run >> effects; printf "report.json"'
+      outputs: {stdout: true}
+    outputs:
+      report: {type: artifact, from: result.stdout}
+      code: {type: number, from: result.exitCode}
+  - id: consume
+    shell: 'if [ ! -e retried ]; then touch retried; exit 1; fi; printf "%s:%s" \${{ steps.capture.outputs.report }} \${{ steps.capture.outputs.code }} > result'
+`,
+    (root) => {
+      expect(runCli(root, "run", "test").exitCode).toBe(1);
+      const resumed = runCli(root, "run", "test");
+      expect(resumed.exitCode).toBe(0);
+      expect(readFileSync(`${root}/effects`, "utf8")).toBe("run\n");
+      expect(readFileSync(`${root}/result`, "utf8")).toBe("report.json:0");
+    },
+  );
+});
+
+test("inserted output and input values are literal data, not new expressions or shell commands", () => {
+  fixture(
+    stringify({
+      inputs: { secret: {}, value: {} },
+      steps: [
+        {
+          id: "produce",
+          shell: { command: "cat payload", outputs: { stdout: true } },
+          outputs: { value: { type: "string", from: "result.stdout" } },
+        },
+        {
+          id: "consume",
+          shell: `printf '%s' \${{ steps.produce.outputs.value }} > received; printf '%s' \${{ inputs.value }} > input-value`,
+        },
+      ],
+    }),
+    (root) => {
+      const payload = `\${{ inputs.secret }} \${{ steps.produce.stdout }} '; touch unwanted; #`;
+      writeFileSync(`${root}/payload`, payload);
+      const result = runCli(root, "run", "test", "--secret=do-not-expand", `--value=${payload}`);
+      expect(result.exitCode).toBe(0);
+      expect(readFileSync(`${root}/received`, "utf8")).toBe(payload);
+      expect(readFileSync(`${root}/input-value`, "utf8")).toBe(payload);
+      expect(existsSync(`${root}/unwanted`)).toBe(false);
+    },
+  );
+});
+
+test("selected streams enforce a combined UTF-8 byte limit", () => {
+  fixture(
+    stringify({
+      steps: [
+        {
+          id: "produce",
+          shell: { command: "cat payload", outputs: { stdout: true } },
+        },
+        { id: "consume", shell: "touch unwanted" },
+      ],
+    }),
+    (root) => {
+      writeFileSync(`${root}/payload`, "é".repeat(32769));
+      const result = runCli(root, "run", "test");
+      expect(result.exitCode).toBe(1);
+      expect(result.output).toContain("exceeds output limit");
+      expect(existsSync(`${root}/unwanted`)).toBe(false);
+    },
+  );
+});
+
+test("replays saved typed agent outputs without a model call or remapping", async () => {
+  const { BACKGROUND_CONTEXT } = await import("@earendil-works/chord/context");
+  const { createAgentRuntime } = await import("../src/agent-runtime");
+  const { appendEvent, openJournal } = await import("../src/journal");
+  const root = mkdtempSync(resolve(tmpdir(), "factory-output-replay-"));
+  let journal: Awaited<ReturnType<typeof openJournal>> | undefined;
+  try {
+    mkdirSync(`${root}/.factory/pipelines`, { recursive: true });
+    mkdirSync(`${root}/.factory/agents`, { recursive: true });
+    writeFileSync(`${root}/.factory/agents/producer.md`, "---\nname: producer\n---\nProduce outputs.\n");
+    const pipeline = {
+      steps: [
+        {
+          id: "produce",
+          agent: "producer",
+          task: "This must not run during replay",
+          // The saved checkpoint wins even if the mapping was subsequently edited.
+          outputs: { value: { type: "string", from: "result.missing" } },
+        },
+        { id: "consume", shell: `printf '%s' \${{ steps.produce.outputs.value }} > received` },
+      ],
+    };
+    writeFileSync(`${root}/.factory/pipelines/test.yml`, stringify(pipeline));
+    journal = await openJournal(root, "pipeline:test", () => ({}), createAgentRuntime(root, pipeline));
+    await appendEvent(journal.conversation, "factory.step", {
+      runId: journal.runId,
+      key: "pipeline:test:test:test:produce:1",
+      stepId: "produce",
+      visit: 1,
+      status: "completed",
+      result: { status: "completed", outputs: { value: "original mapped value" } },
+    });
+    await journal.harness.close(BACKGROUND_CONTEXT);
+    const resumed = runCli(root, "run", "test");
+    expect(resumed.exitCode).toBe(0);
+    expect(resumed.output).toContain("reusing durable result");
+    expect(readFileSync(`${root}/received`, "utf8")).toBe("original mapped value");
+  } finally {
+    await journal?.harness.close(BACKGROUND_CONTEXT);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("refine regenerates round-local outputs and repeated refine requests replay them", () => {
+  fixture(
+    stringify({
+      steps: [
+        {
+          id: "produce",
+          shell: {
+            command: 'echo run >> effects; printf "report-%s" "$(wc -l < effects | tr -d \' \')"',
+            outputs: { stdout: true },
+          },
+          outputs: { report: { type: "artifact", from: "result.stdout" } },
+        },
+        { id: "consume", shell: `printf '%s' \${{ steps.produce.outputs.report }} > received` },
+      ],
+    }),
+    (root) => {
+      const session = (request: object) =>
+        Bun.spawnSync([process.execPath, `${repository}/src/cli.ts`, "session"], {
+          cwd: root,
+          stdin: Buffer.from(`${JSON.stringify({ pipeline: "test", runId: "outputs", ...request })}\n`),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+      expect(session({ mode: "new" }).exitCode).toBe(0);
+      expect(readFileSync(`${root}/received`, "utf8")).toBe("report-1");
+      const request = { mode: "refine", instruction: "Regenerate", requestId: "refinement" };
+      expect(session(request).exitCode).toBe(0);
+      expect(readFileSync(`${root}/received`, "utf8")).toBe("report-2");
+      expect(session(request).exitCode).toBe(0);
+      expect(readFileSync(`${root}/effects`, "utf8")).toBe("run\nrun\n");
+      expect(readFileSync(`${root}/received`, "utf8")).toBe("report-2");
+    },
+  );
+});

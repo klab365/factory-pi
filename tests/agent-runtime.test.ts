@@ -50,50 +50,114 @@ describe("handoff results and replay", () => {
   const root = `${import.meta.dir}/..`;
   const pipeline = parse(readFileSync(`${root}/.factory/pipelines/software-factory.yml`, "utf8"));
 
-  function setup(text: string) {
+  const approved = '<factory-result>{"status":"approved"}</factory-result>';
+
+  function setup(text: string, correction = text, settledStatus = "done") {
     const runtime = createAgentRuntime(root, pipeline);
     const tool = runtime
       .agentChange("builder")
       .tools?.find((tool) => tool.name === "handoff_builder_to_reviewer");
     if (!tool) throw new Error("Missing handoff tool");
-    const requestIds: string[] = [];
+    const requests: { requestId: string; content: string }[] = [];
+    const submitted = new Set<string>();
+    let configurations = 0;
     // An existing owned child is what a replay sees after the creation commit.
     const tx = {
       scanConversations: async () => ({ items: [{ id: "child" }] }),
       createConversation: async () => {
         throw new Error("Replay must reuse the child");
       },
-      entry: async () => ({ model: [{ content: [{ type: "text", text }] }] }),
+      submissionByRequest: async (_id: string, requestId: string) => submitted.has(requestId),
+      entry: async (_type: unknown, answer: string) => ({
+        model: [{ content: [{ type: "text", text: answer }] }],
+      }),
+    };
+    const child = {
+      id: "child",
+      configure: async () => {
+        configurations++;
+      },
+      commit: async (callback: (tx: object) => unknown) => callback(tx),
+      submit: async (request: { requestId: string; content: string }) => {
+        requests.push(request);
+        submitted.add(request.requestId);
+        const answer = request.requestId.endsWith(":factory-result-repair") ? correction : text;
+        return { wait: async () => ({ status: settledStatus, type: "input", answer }) };
+      },
     };
     const api = {
       taskId: "handoff-task",
       commit: async (callback: (tx: object) => unknown) => callback(tx),
       details: async () => {},
-      conversation: async () => ({
-        submit: async ({ requestId }: { requestId: string }) => {
-          requestIds.push(requestId);
-          return { wait: async () => ({ status: "done", type: "input", answer: "answer" }) };
-        },
-      }),
+      conversation: async () => child,
     } as unknown as Parameters<typeof tool.execute>[1];
-    return { tool, api, requestIds };
+    return {
+      tool,
+      api,
+      requests,
+      configurations: () => configurations,
+      run: () =>
+        runtime.runAgent(
+          child as unknown as Parameters<typeof runtime.runAgent>[0],
+          "reviewer",
+          "Review",
+          "step-1",
+        ),
+    };
   }
 
   test("reuses its owned child and stable submission id on replay", async () => {
-    const { tool, api, requestIds } = setup('<factory-result>{"status":"approved"}</factory-result>');
+    const { tool, api, requests } = setup(approved);
     expect(tool.replay).toBe("safe");
     for (let i = 0; i < 2; i++) {
       await tool.execute({ task: "Review" }, api, BACKGROUND_CONTEXT);
     }
-    expect(requestIds).toEqual(["handoff-handoff-task", "handoff-handoff-task"]);
+    expect(requests.map(({ requestId }) => requestId)).toEqual([
+      "handoff-handoff-task",
+      "handoff-handoff-task",
+    ]);
   });
 
   test.each([
     ["No structured result", "did not return"],
     ['<factory-result>{"status":"completed"}</factory-result>', "undeclared status"],
     ['<factory-result>{"status":42}</factory-result>', "invalid factory result"],
-  ])("rejects invalid child answers: %s", async (text, error) => {
-    const { tool, api } = setup(text);
-    await expect(tool.execute({ task: "Review" }, api, BACKGROUND_CONTEXT)).rejects.toThrow(error);
+    ['<factory-result>{"status":}</factory-result>', "invalid JSON"],
+  ])("requests a correction for invalid agent answers: %s", async (text, error) => {
+    const { run, requests, configurations } = setup(text, approved);
+    for (let i = 0; i < 2; i++) {
+      expect(await run()).toEqual({ status: "approved" });
+    }
+    expect(configurations()).toBe(1);
+    expect(requests.map(({ requestId }) => requestId)).toEqual([
+      "step-1",
+      "step-1:factory-result-repair",
+      "step-1",
+      "step-1:factory-result-repair",
+    ]);
+    expect(requests[1].content).toContain(error);
+    expect(requests[1].content).toContain("approved, changes_requested");
+  });
+
+  test("returns the corrected result from a handoff", async () => {
+    const { tool, api, requests } = setup("No structured result", approved);
+    const result = await tool.execute({ task: "Review" }, api, BACKGROUND_CONTEXT);
+    expect(result).toEqual({ output: [{ type: "text", text: approved }] });
+    expect(requests.map(({ requestId }) => requestId)).toEqual([
+      "handoff-handoff-task",
+      "handoff-handoff-task:factory-result-repair",
+    ]);
+  });
+
+  test("stops after one correction request with the last validation error", async () => {
+    const { run, requests } = setup("No structured result", '<factory-result>{"status":}</factory-result>');
+    await expect(run()).rejects.toThrow("invalid JSON in <factory-result> after one correction request");
+    expect(requests).toHaveLength(2);
+  });
+
+  test("does not ask for a correction when the turn fails", async () => {
+    const { run, requests } = setup("No structured result", approved, "failed");
+    await expect(run()).rejects.toThrow("did not complete: failed");
+    expect(requests).toHaveLength(1);
   });
 });

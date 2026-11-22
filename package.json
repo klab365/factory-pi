@@ -1,6 +1,5 @@
 {
   "name": "pi-software-factory",
-  "private": true,
   "type": "module",
   "scripts": {
     "factory": "bun run src/cli.ts",
@@ -10,7 +9,8 @@
     "lint": "biome lint src tests",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
-    "check": "bun run check-format && bun run lint && bun run test && bun run typecheck && bun run validate"
+    "check": "bun run check-format && bun run lint && bun run test && bun run typecheck && bun run validate",
+    "build": "bun build --compile src/cli.ts --outfile dist/factory"
   },
   "dependencies": {
     "@earendil-works/chord": "^1.5.2",
@@ -26,5 +26,26 @@
     "@biomejs/biome": "^2.6.8",
     "@types/bun": "latest",
     "typescript": "^7.0.2"
+  },
+  "version": "0.1.0",
+  "description": "Durable pipeline runner and Pi extension for project-local factories",
+  "bin": {
+    "factory": "src/cli.ts"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/pi-extension.ts"
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/klab365/factory-pi.git"
+  },
+  "engines": {
+    "bun": ">=1.3.0"
   }
 }

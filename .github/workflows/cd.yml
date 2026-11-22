@@ -1,0 +1,75 @@
+name: Release
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      released: ${{ steps.release.outputs.release_created }}
+      tag: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
+      - uses: actions/checkout@v4
+        if: steps.release.outputs.release_created == 'true'
+      - uses: jdx/mise-action@v3
+        if: steps.release.outputs.release_created == 'true'
+        with:
+          install: true
+      - name: Verify release
+        if: steps.release.outputs.release_created == 'true'
+        run: bun run check
+      - uses: actions/setup-node@v4
+        if: steps.release.outputs.release_created == 'true'
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - name: Publish package
+        if: steps.release.outputs.release_created == 'true'
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  binaries:
+    needs: release
+    if: needs.release.outputs.released == 'true'
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: bun-linux-x64
+            name: factory-linux-x64
+          - os: ubuntu-24.04-arm
+            target: bun-linux-arm64
+            name: factory-linux-arm64
+          - os: macos-15-intel
+            target: bun-darwin-x64
+            name: factory-darwin-x64
+          - os: macos-latest
+            target: bun-darwin-arm64
+            name: factory-darwin-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v3
+        with:
+          install: true
+      - name: Compile standalone runtime
+        run: bun build --compile --target=${{ matrix.target }} src/cli.ts --outfile dist/${{ matrix.name }}
+      - name: Test standalone runtime without Bun
+        run: FACTORY_TEST_BINARY="$PWD/dist/${{ matrix.name }}" bun test tests/standalone.test.ts
+      - name: Upload release binary and checksum
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release.outputs.tag }}
+          BINARY: ${{ matrix.name }}
+        run: |
+          cd dist
+          shasum -a 256 "$BINARY" > "$BINARY.sha256"
+          gh release upload "$TAG" "$BINARY" "$BINARY.sha256" --repo "$GITHUB_REPOSITORY"

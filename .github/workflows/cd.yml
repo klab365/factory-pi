@@ -44,7 +44,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/factory-npm"
           archive=$(npm pack --pack-destination "$RUNNER_TEMP/factory-npm")
           echo "archive=$RUNNER_TEMP/factory-npm/$archive" >> "$GITHUB_OUTPUT"
-      - name: Publish Pi extension via npm Trusted Publishing
-        run: npm exec --yes --package=npm@11.19.1 -- npm publish "$ARCHIVE" --access public --registry https://registry.npmjs.org
+      - name: Stage Pi extension via npm Trusted Publishing
+        run: npm exec --yes --package=npm@11.19.1 -- npm stage publish "$ARCHIVE" --access public --registry https://registry.npmjs.org
         env:
           ARCHIVE: ${{ steps.pack.outputs.archive }}

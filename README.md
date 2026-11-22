@@ -1,353 +1,73 @@
-# Pi Software Factory (prototype)
+# Factory for Pi
 
-Pipelines liegen unter `.factory/pipelines/` und enthalten Shell-Schritte (`shell`) oder Pi-Durable-Agent-Schritte (`agent` + `task`). Agent-Instruktionen liegen unter `.factory/agents/` als Markdown mit YAML-Frontmatter (`name`, `description`, `model`, `thinking`, `tools`, optional `skills`). Agents laufen als Conversations im pi-durable-Harness und verwenden die Coding-Tools des Harness.
+**A Pi extension for resumable software workflows.**
 
-## Installation und Verwendung in anderen Repositories
+Factory adds `/factory` to Pi. Define shell commands, agent tasks, and human checkpoints in project-local YAML. Pi Durable records progress and agent history so you can pick up interrupted work and refine completed runs.
 
-### Standalone (ohne installiertes Bun oder Node)
+- Version pipelines, agents, and skills alongside your code.
+- Route steps by status, bound review loops, and pause for human approval.
+- Resume from saved checkpoints instead of repeating completed work.
 
-GitHub-Releases enthalten einzelne ausführbare Dateien für Linux und macOS,
-jeweils x64 und arm64. Die Bun-Laufzeit und JavaScript-Abhängigkeiten sind
-bereits eingebettet. Beispiel für Linux x64 nach Veröffentlichung:
+## Get started in Pi
 
-```sh
-mkdir -p "$HOME/.local/bin"
-cd /tmp
-curl -fLO https://github.com/klab365/factory-pi/releases/latest/download/factory-linux-x64
-curl -fLO https://github.com/klab365/factory-pi/releases/latest/download/factory-linux-x64.sha256
-shasum -a 256 -c factory-linux-x64.sha256
-chmod +x factory-linux-x64
-mv factory-linux-x64 "$HOME/.local/bin/factory"
-export PATH="$HOME/.local/bin:$PATH"
-cd /pfad/zum/zielprojekt
-factory init
-factory run hello
-```
-
-Für macOS oder arm64 den Asset-Namen entsprechend ersetzen. Updates erfolgen
-über denselben Download mit Prüfsummenprüfung; für reproduzierbare Installationen
-`releases/latest/download` durch `releases/download/<tag>` ersetzen.
-Shell-Pipelines benötigen weiterhin `bash` sowie die im Projekt verwendeten
-Werkzeuge (z. B. Git). Provider-Zugangsdaten bleiben für Agent-Schritte nötig.
-Windows-Binaries werden derzeit nicht veröffentlicht.
-
-Zum lokalen Bauen: `bun install --frozen-lockfile && bun run build` erzeugt
-`dist/factory` für das Build-System. Nur der Build benötigt Bun.
-
-### npm / verlinkter Checkout
-
-Diese alternative Installation benötigt Bun auf `PATH` (siehe `mise.toml`
-für die getestete Version). Nach Veröffentlichung auf npm:
-
-```sh
-bun install -g pi-software-factory
-cd /pfad/zum/zielprojekt
-factory init
-factory run hello
-# Update:
-bun install -g pi-software-factory@latest
-```
-
-`factory init` erstellt `.factory/pipelines/hello.yml`, falls noch keine
-YAML-Pipeline existiert, sowie `.factory/agents/` und eine lokale Ignore-Datei
-für `state/`. Vorhandene Dateien bleiben unverändert; alle `.yml`-Pipelines
-werden validiert (Fehler führen zu Exit-Code 1). Der Starter benötigt weder
-Modell noch Credentials. Eigene Agents und Pipelines gehören ins Zielprojekt;
-der repository-spezifische `software-factory`-Workflow wird nicht kopiert.
-
-Pi entdeckt die Extension über die Paket-Metadaten:
+Install the extension once the npm package is published:
 
 ```sh
 pi install npm:pi-software-factory
-# Updates der Pi-Pakete:
-pi update
 ```
 
-Pi selbst muss separat installiert sein. Zum Verwenden der Standalone-Laufzeit
-mit der npm-installierten Pi-Extension (ohne Bun) den absoluten Binary-Pfad setzen:
+Or load it from a local Factory checkout. Install dependencies there with `bun install --frozen-lockfile`, then start Pi from your target project:
 
 ```sh
-export FACTORY_BIN="$HOME/.local/bin/factory"
-pi
+pi -e /path/to/factory-pi/src/pi-extension.ts
 ```
 
-Ohne `FACTORY_BIN` verwendet die Extension weiterhin `bun` für den Quellcode-Runner.
-Der Pfad muss auf eine vertrauenswürdige Factory-Binary zeigen. Pi anschließend
-im Zielprojekt starten. Alternativ ohne Veröffentlichung:
+In Pi, run `/factory init` to create a starter project configuration. To try a pipeline with an approval step, save this as `.factory/pipelines/check.yml` in the target project:
 
-```sh
-cd /pfad/zum/factory-pi
-bun install --frozen-lockfile
-bun link
-cd /pfad/zum/zielprojekt
-factory init
-pi -e /pfad/zum/factory-pi/src/pi-extension.ts
+```yaml
+name: Check the project
+steps:
+  - id: test
+    shell: bun test
+  - id: accept
+    human:
+      prompt: Approve the result?
+      choices: [approved, rejected]
+    transitions:
+      approved: end
+      rejected: end
 ```
 
-Installation und Projekt sind getrennt: CLI und Extension laden Code aus dem
-installierten Paket, aber Konfiguration, Shell-Arbeitsverzeichnis und Zustand
-immer aus dem aktuellen Zielprojekt (`.factory/`). Für ein Update eines
-verlinkten Checkouts dort `git pull` und `bun install --frozen-lockfile` ausführen.
+In Pi, select a model and run:
 
-### Releases
+```text
+/factory validate check
+/factory run check
+```
 
-Conventional Commits auf `main` steuern Release Please in `.github/workflows/cd.yml`.
-Der Release-PR aktualisiert Version und Changelog; nach dem Merge werden ein
-GitHub-Release und nach erfolgreichen Checks das npm-Paket veröffentlicht.
-Native Runner bauen und testen zusätzlich Standalone-Binaries ohne Bun auf dem
-Runtime-PATH und laden sie inklusive SHA-256-Prüfsumme zum Release hoch.
-Dafür `NPM_TOKEN` mit Publish-Rechten als Repository-Secret konfigurieren.
-Optional `RELEASE_PLEASE_TOKEN` (PAT/App-Token) setzen, damit Release-PRs auch
-weitere GitHub-Workflows auslösen; GitHub muss PR-Erstellung durch Actions erlauben.
+Use `/factory resume` to continue an interrupted run or `/factory refine` to start a follow-up round of a completed one. Pi needs a configured model to start the run, even when the pipeline only contains shell and human steps. Factory's built-in `agent:` steps also use Pi Durable; see the [syntax reference](docs/syntax.md) for a complete agent example.
 
-## Voraussetzungen
+## Documentation
+
+| Page | What it covers |
+| --- | --- |
+| [User guide](docs/guide.md) | Pi setup, `/factory` commands, and credentials |
+| [Syntax reference](docs/syntax.md) | Pipelines, agents, skills, templates, and outputs |
+| [Architecture](docs/architecture.md) | The extension, runner process, state isolation, and replay |
+
+## Development
 
 ```sh
 mise install
+mise run dev-pi            # Launch Pi with the local extension
+mise run dev-pi -- --smoke # Check extension registration without a model
+mise run check             # Format, lint, tests, TypeScript, and pipeline validation
 ```
 
-Der Agent-Provider muss in Pis `auth.json` eingerichtet sein (standardmäßig `~/.pi/agent/auth.json`; `PI_CODING_AGENT_DIR` kann den Pfad ändern). Der Durable-Runner liest und aktualisiert diese Credentials. Shell-Schritte führen YAML-Kommandos mit `bash -lc` im Projektverzeichnis aus – Pipelines daher nur aus vertrauenswürdigen Quellen aus.
+Start the documentation site with `mise run docs:dev` and open <http://localhost:4321/factory-pi/>. Use `mise run docs:build` for a static build or `mise run docs:preview` to preview it locally.
 
-## CI
+The bundled `software-factory` pipeline implements and reviews a change, then asks for approval before committing and pushing. **Run it only on a separate branch with a clean worktree:** publishing commits all worktree changes and requires Git, Python, and `gh`.
 
-Der Workflow `.github/workflows/ci.yml` führt bei Pull Requests und Pushes auf `main` die lokalen Checks mit `mise run check` aus. `mise install` installiert die in `mise.toml` festgelegten Bun- und Python-Versionen und führt den `postinstall`-Hook aus, der Dependencies via `bun install --frozen-lockfile` aus `bun.lock` installiert. Bei Dependency-Updates `bun install` ausführen und die aktualisierte `bun.lock` mit einchecken.
+## Operational limits
 
-## Verwenden
-
-```sh
-# Lokale Checks:
-mise run check
-# Formatierung automatisch anwenden:
-mise run format
-# Diese Repository-Factory mit einem eigenen Ziel beauftragen:
-mise run factory run software-factory --goal="Implementiere X und ergänze passende Tests"
-```
-
-`software-factory` (`.factory/pipelines/software-factory.yml`) ist die Arbeits-Pipeline für dieses Repository. Builder und Reviewer liefern ein strukturiertes `<factory-result>` mit Status und Feedback. Nach `completed` geht es zum Review. `changes_requested` vom Reviewer führt direkt zurück zum Builder, `approved` zur menschlichen Abnahme. Dort startet `approved` die Veröffentlichung; `rejected` beendet den Lauf ohne Veröffentlichung. Bei `change_requested` fragt die Pipeline nach Freitext und schickt ihn zusammen mit dem letzten Reviewer-Feedback an den Builder zurück. Danach folgen erneut Review und Abnahme; `maxVisits` begrenzt die Schleife. Ein Fehler stoppt die Pipeline.
-
-Die Mise-Tasks `format`, `check-format`, `lint`, `tests`, `typecheck`, `validate` und `check` sind auch einzeln ausführbar; `check` bündelt alle Prüfungen. Pi Durable speichert Workflow- und Step-Checkpoints als JSONL in `.factory/state/durable`; ein beim Abbruch offener Lauf wird beim nächsten Start fortgesetzt. Jeder neue Lauf erhält eine eigene frische Run-Conversation für Ergebnisse, Cursor und Checkpoints. Zusätzlich erhält jeder Agent pro Lauf eine eigene Conversation: Erneute Besuche desselben Agents verwenden dieselbe Historie, unterschiedliche Agents bleiben strikt getrennt. Der Orchestrator übergibt nur strukturierte Ergebnisse/Feedback über die Task-Templates; das Arbeitsverzeichnis bleibt gemeinsam. Die Zuordnung von `runId` zu Run-Conversation und von `(runId, agentName)` zu Agent-Conversation wird jeweils atomar mit der Conversation gespeichert. Beim Resume werden exakt diese Conversations wieder geöffnet; ein fehlender Conversation-Datensatz ist ein Fehler und wird nicht durch eine neue Session ersetzt. Bereits vor dieser Trennung gestartete Läufe werden weiterhin in ihrer ursprünglichen Root-Conversation fortgesetzt, einschließlich vorhandener Handoffs; neue Läufe verwenden diese nie. Bereits vor der Agent-Trennung zugelassene Aufrufe werden anhand ihrer Request-ID in der Run-Conversation wiedergefunden und ohne erneute Konfiguration oder doppelte Ausführung abgeschlossen; erst neue Aufrufe wechseln in die isolierte Agent-Conversation. Bereits als erfolgreich gespeicherte Schritte werden übersprungen. Da ein Prozess zwischen externer Nebenwirkung und Checkpoint abstürzen kann, sind Shell-Schritte im Zweifel **at-least-once** und sollten idempotent sein. Es gibt noch keine Parallelität oder automatische Trigger-Ausführung.
-
-Pipelines definieren ihre Felder unter `inputs:`. Pflichtfelder werden interaktiv abgefragt; nicht-interaktive Aufrufe können sie mit `--feld=value` übergeben. In `shell`- und `task`-Texten werden Werte mit `${{ inputs.feld }}` eingesetzt. Beispiel: `.factory/pipelines/software-factory.yml` verwendet `inputs.goal`; Agent-Instruktionen liegen unter `.factory/agents/`.
-
-Nach der menschlichen Freigabe committet `publish` alle Git-Änderungen im Worktree und pusht den aktuellen Branch ohne Force-Push nach `origin`. Deshalb in einem separaten Branch mit einem anfangs sauberen Worktree arbeiten. Der Schritt führt `scripts/publish-pr.py` mit `python3` aus (nur Standardbibliothek) und benötigt authentifiziertes `gh`, Git-Push-Rechte und ein GitHub-Repository als `origin`; auf dem Default-Branch oder mit detached HEAD bricht er ab. Der Reviewer liefert `prTitle`, `prSummary` und `prVerification`; die Abnahme zeigt diese Metadaten vor der Veröffentlichung. Der kurze englische Titel ist zugleich der Commit-Betreff. Bei einem neuen PR formatiert `publish` die Beschreibung mit `## Summary` und `## Verification` und hängt für Issue-URLs aus dem Ziel, die auf dasselbe Repository verweisen, `Close #…` ans Ende an. Fehlende Metadaten stoppen den Publisher vor dem Commit; ältere Läufe ohne diese Felder brauchen vor der Veröffentlichung ein neues Review. Ein existierender offener PR erhält durch den Push die neuen Commits, behält aber Titel und Beschreibung; andernfalls wird ein PR gegen den Default-Branch erstellt. Nach einem Fehler kann der Lauf fortgesetzt werden: Ein schon erstellter Commit und ein schon geöffneter PR werden wiederverwendet, solange Branch und Worktree unverändert bleiben.
-
-Shell-Schritte verwenden `shell:` (die alte `run:`-Syntax wird nicht mehr akzeptiert). Für einfache Schritte kann der Wert ein Kommando-String sein; konfigurierbare Schritte verwenden ein Objekt:
-
-```yaml
-- id: build
-  shell:
-    command: bun run build
-    workingDirectory: packages/app # relativ zum Projekt-Root; Standard: .
-    env:
-      BUILD_MODE: production
-    timeout: 120000 # Millisekunden
-    outputs: {stdout: true, stderr: false}
-```
-
-`env` überschreibt/ergänzt die Prozessumgebung. `outputs.stdout` und `outputs.stderr` speichern die jeweiligen, am Ende getrimmten Streams sowie `exitCode` im dauerhaften Step-Ergebnis; ausgewählte Werte stehen später als `${{ steps.build.stdout }}` bzw. `${{ steps.build.stderr }}` zur Verfügung. Nicht ausgewählte Streams werden weiterhin angezeigt, aber nicht persistiert. Bei Timeout beendet der Runner die Shell samt Nachfahren. Shell-Seiteneffekte sind **at-least-once**: Bei Abbruch zwischen Seiteneffekt und durablem Checkpoint kann ein Kommando erneut laufen; externe Aktionen sollten idempotent sein.
-
-Zusätzlich zu diesen statusgesteuerten Pipeline-Übergängen können Agents andere Agents direkt über pi-durable-Handoff-Tools beauftragen. Die erlaubten Ziele leiten sich aus `transitions` ab; nicht deklarierte Handoffs sind nicht als Tool verfügbar. Jeder Handoff läuft als Child-Conversation/Task und wird im JSONL-Journal unter `.factory/state/durable` persistiert.
-
-## Factory in Pi
-
-```sh
-# Isoliertes Pi mit Factory-Extension (keine Änderung an ~/.pi/agent):
-mise run dev-pi
-# Lade-Smoke-Test ohne Modellaufruf:
-mise run dev-pi -- --smoke
-# Alternativ in normalem Pi explizit laden:
-pi -e ./src/pi-extension.ts
-```
-
-In Pi:
-
-- `/factory` oder `/factory run`: YAML-Pipeline auswählen und Inputs abfragen.
-- `/factory run software-factory`: Pipeline direkt wählen; `goal` öffnet einen
-  mehrzeiligen Editor. Esc bricht die Eingabe ab; Flags sind nicht erforderlich.
-- `/factory resume [runId]`: unterbrochenen Lauf mit gespeicherten Inputs und exakt
-  denselben Durable-Agent-Conversations fortsetzen. Ohne ID erscheint eine Auswahl
-  unterbrochener Läufe; bei leerer Auswahl eine Fehlermeldung.
-- `/factory refine [runId]`: abgeschlossenen Lauf auswählen, Zusatzanweisung im Editor
-  eingeben und eine weitere Runde derselben Pipeline/Agent-Conversations starten.
-  Ohne ID werden nur abgeschlossene Läufe des aktuellen Worktrees angeboten; ein
-  einzelner Treffer wird direkt gewählt. Die Auswahl zeigt Ziel, Pipeline, Zeit und ID.
-  Neue Pi-Läufe speichern kanonische Repository- (Git-Common-Dir) und Worktree-Pfade,
-  außerhalb von Git den kanonischen Arbeitsordner. Symlinks und Git-Unterordner
-  werden normalisiert; nach Verschieben eines Checkouts gilt er als anderer Workspace.
-  Alte Katalogeinträge ohne Identität bleiben ohne ID ausgeblendet, sind aber mit
-  expliziter ID nutzbar. IDs mit bekannter fremder Worktree-Identität werden abgelehnt;
-  dafür Pi im ursprünglichen Worktree öffnen. `resume` bleibt unverändert.
-  Visit-Limits gelten pro Runde. Unterbrochene Runden zuerst mit `resume` fortsetzen.
-- Jedes neue `run` erzeugt eine unabhängige benannte Pi-Session und neue
-  Builder-/Reviewer-Conversations, auch wenn ein anderer Lauf unterbrochen ist.
-
-Die echte menschliche Ziel-Eingabe wird als User-Nachricht gespeichert (dadurch legt
-Pi die Session-Datei an). Ein expliziter Kickoff über `pi.sendUserMessage` startet
-einen echten Agent-Turn, der das registrierte Tool `factory_run` aufruft. Damit sehen
-Session-Monitore aktive Agent-/Tool-Arbeit. Das Tool prüft Run-, Request- und native
-Session-Zuordnung und streamt Fortschritt über `onUpdate`; gerenderte Custom-Entries
-und Footer-Status bleiben zusätzlich erhalten. Die Timeline bleibt beim Wiederöffnen
-sichtbar. Resume und Refine verwenden denselben Weg; Abbruch beendet den Prozessbaum
-und lässt den ausstehenden Request für Resume gespeichert. Der Kickoff benötigt das
-in Pi gewählte Modell (die Integrationstests verwenden einen lokalen Test-Provider). `.factory/state/pi-runs.json` ordnet
-Run-IDs ihren Pi-Sessions zu; die Ausführung und ihre Checkpoints bleiben im vorhandenen
-Durable-Journal. Vor dem Öffnen des Harness wird der Scheduler auf die ausgewählte
-Run-Conversation, ihre gespeicherten Agent-Conversations und deren transitive
-Handoff-Conversations eingeschränkt. Sowohl die Wiederaufnahme lebender Tasks als
-auch die Zulassung wartender Inputs bleibt auf diesen Baum begrenzt; ein neuer Lauf
-aktiviert keine unterbrochenen Tasks anderer Läufe im gemeinsamen Journal. Gespeicherte
-IDs und Historien werden dabei nicht migriert oder ersetzt. Alte Root-Läufe bleiben
-fortsetzbar; sind mehrere unterbrochene Legacy-Läufe derselben Root-Conversation
-zugeordnet, wird die mehrdeutige Auswahl aus Sicherheitsgründen abgelehnt, statt
-möglicherweise fremde Tasks zu starten. Neue unabhängige Läufe bleiben möglich.
-
-Die Extension startet die bestehende CLI in einem Bun-Child-Prozess
-mit JSON über stdin und JSONL-Events über stdout, ohne Shell-Interpolation von
-Benutzereingaben. Shell-Schritte in vertrauenswürdigen YAML-Dateien bleiben ausführbar.
-Während eines aktiven Laufs ist ein Sessionwechsel gesperrt; Pi-Shutdown beendet den
-Runner unter POSIX in einer eigenen Prozessgruppe: zuerst SIGTERM, nach 300 ms
-SIGKILL auch für verbleibende Nachkommen. Shutdown wartet auf diese Bereinigung;
-dasselbe gilt bei Fehlern in der Event-Verarbeitung. Nach Prozessabbruch `resume` verwenden.
-
-`dev-pi` verwendet ein temporäres Agent-Verzeichnis, eine Kopie von `auth.json` und
-nur die explizite Factory-Extension; normale Extensions, MCP, Skills, Prompts, Themes
-und projektlokale Konfiguration werden nicht geladen. OAuth-Updates betreffen nur die
-Kopie. Der Smoke-Test kopiert keine Credentials und prüft per RPC `get_commands`, dass
-`/factory` geladen ist; er sendet keinen Prompt und macht keinen Modellaufruf. Sessions liegen dauerhaft unter `.factory/state/pi-sessions`, damit spätere
-Teststarts sie fortsetzen können. Das temporäre Verzeichnis wird beim Beenden gelöscht.
-Dies isoliert die **Pi-Konfiguration**, nicht das Arbeitsverzeichnis: die Factory darf
-weiterhin Projektdateien bearbeiten und YAML-Kommandos ausführen. Nicht mehrere
-Factory-Pi-Prozesse gleichzeitig im selben Repository betreiben.
-
-## Agent-Skills
-
-Agents wählen wiederverwendbare Anweisungen explizit im YAML-Frontmatter:
-
-```yaml
----
-name: builder
-skills:
-  - typescript-expert
-# alternativ: skills: [typescript-expert]
----
-Agent-spezifische Anweisungen …
-```
-
-Ein Name wird ausschließlich relativ zum Projektverzeichnis als
-`.agents/skills/<name>/SKILL.md` aufgelöst. Es gibt keine globale Suche, keinen
-Fallback, keine automatischen Skills und keine Pfad-/URL-Referenzen. Namen bestehen
-aus kleingeschriebenen ASCII-Buchstaben/Ziffern mit einzelnen Bindestrichen zwischen
-Segmenten (maximal 64 Zeichen). Symlinks dürfen nicht aus dem Projekt herausführen.
-Fehlendes `skills` oder `skills: []` lädt nichts; `null`, andere Feldtypen,
-ungültige Namen und doppelte Referenzen sind Fehler.
-
-Jede `SKILL.md` benötigt YAML-Frontmatter mit `name` (identisch zum Verzeichnisnamen)
-und einer nicht leeren `description` sowie einen nicht leeren Markdown-Anweisungstext:
-
-```markdown
----
-name: typescript-expert
-description: Sichere TypeScript-Implementierung und Tests
----
-Prüfe externe Eingaben vor ihrer Verwendung.
-```
-
-`validate` und der Run-Preflight prüfen alle referenzierten Skills aller
-Pipeline-Agents, bevor ein Journal geöffnet oder ein Schritt ausgeführt wird.
-Nicht ausgewählte Skills werden weder gelesen noch validiert. Der Runner hängt
-nur die ausgewählten Anweisungstexte in Listenreihenfolge mit Name, Beschreibung
-und projektrelativem Quellpfad an die Agent-Instruktionen an, vor dem Factory-
-Ergebnisprotokoll. Weitere Dateien/Links in Skills werden nicht automatisch geladen.
-Skills erteilen keine Tools oder Handoff-Rechte und sind wie Agent-Instruktionen
-vertrauenswürdige Projektkonfiguration, keine Sandbox.
-
-Die Definitionen werden pro Runtime geladen, ohne globale Skill-Caches oder
-zusätzliche History-Nachrichten. Normale Agent-Aufrufe und neue Handoff-Children
-verwenden dieselbe agentenspezifische Konfiguration; die bestehende Trennung der
-Agent-/Run-Conversations bleibt erhalten. Bereits zugelassene Requests werden beim
-Replay nicht neu konfiguriert; neue Aufrufe verwenden die aktuell geladenen Skills.
-Die aktuellen Dateien müssen auch beim Resume den Preflight bestehen.
-
-### Mitgelieferte Skills und Quellen
-
-| Skill | Agent | Zweck |
-| --- | --- | --- |
-| `typescript-expert` | Builder | Sichere TypeScript-Implementierung und deterministische Bun-Tests |
-| `systematic-debugging` | Builder | Reproduktion, Ursachenanalyse und gezielte Regressionstests bei Fehlern |
-| `code-review` | Reviewer | Konkrete Korrektheits-, Sicherheits- und Regressionsprüfung |
-| `verification-before-completion` | Builder, Reviewer | Aktuelle Prüfergebnisse statt unbelegter Abschlussbehauptungen |
-
-Die beiden zusätzlichen Workflow-Skills wurden nach Web-Recherche gezielt ausgewählt:
-Fehlersuche ist bei CLI-/Prozess-/Journal-Grenzen besonders hilfreich; belastbare
-Abschlussprüfungen werden sowohl bei Implementierung als auch Review benötigt.
-Als Referenzen wurden die vollständigen Skills
-[Systematic Debugging](https://github.com/obra/superpowers/blob/22f0b463e7a5e579904dd6211a520321035526f7/skills/systematic-debugging/SKILL.md)
-und [Verification Before Completion](https://github.com/obra/superpowers/blob/22f0b463e7a5e579904dd6211a520321035526f7/skills/verification-before-completion/SKILL.md)
-aus `obra/superpowers` gelesen. Die lokalen Texte sind eigenständig formulierte,
-kompakte Factory-spezifische Checklisten, keine unveränderten Imports. Sie setzen
-keine externen Skill-Loader, Zusatzdateien oder Superpowers-Tools voraus und
-respektieren Read-only-Review, History-Isolation und die bestehenden Pipeline-Status.
-Es werden keine entfernten Inhalte zur Laufzeit geladen.
-
-Auch die bisherigen Texte sind eigenständig für Bun/Factory geschrieben. Als recherchierte Beispiele
-für Skill-Struktur und fokussierte Checklisten dienten
-[JavaScript/TypeScript Jest](https://github.com/github/awesome-copilot/blob/main/skills/javascript-typescript-jest/SKILL.md)
-und [PostgreSQL Code Review](https://github.com/github/awesome-copilot/blob/main/skills/postgresql-code-review/SKILL.md)
-aus GitHubs Awesome Copilot; deren framework-/datenbankspezifische Anweisungen werden
-hier nicht übernommen.
-
-### Human checkpoints
-
-A step can use `human: {prompt: "Approve?", choices: [approved, rejected]}`
- instead of `run` or `agent`. Choices become the result `status`, suitable for
-`transitions`; without choices, free text returns status `completed`. Results
-also expose `response` and `summary` for `${{ steps.<id>.response }}`.
-
-The CLI prompts on a terminal. Non-interactive runs stop at the durable checkpoint
-with an error rather than guessing. Resume with `bun run factory run <pipeline>
---human-response=approved` (one pending response per invocation). Pi displays
-`pending-input` and opens a selector or text input. Cancel or interrupt to leave
-the checkpoint unanswered, then `/factory resume`. Invalid or missing responses
-do not advance. Accepted responses are journaled as completed step results before
-transitions or downstream work, and reused on replay; submissions are scoped to
-the pending step/visit. As with shell steps generally, external shell side effects
-must themselves be idempotent across process interruption.
-
-### Typed step outputs
-
-Named outputs are explicitly selected, never automatically copied from environment variables:
-
-```yaml
-steps:
-  - id: build
-    shell:
-      command: 'printf "dist/report.json"'
-      outputs: {stdout: true}
-    outputs:
-      report: {type: artifact, from: result.stdout}
-      exit: {type: number, from: result.exitCode}
-  - id: consume
-    shell: 'cat ${{ steps.build.outputs.report }}'
-```
-
-`outputs.<name>` requires `type` (`string`, `number`, `boolean`, or `artifact`)
-and `from: result.<field>` (nested agent-result fields are supported). Shell
-sources and their types, and named output references, are checked before running.
-References must name declared outputs whose producers complete on every path to
-the consumer (forward/self references and conditional bypasses are rejected).
-Agent result types are checked at the result boundary; missing or mistyped values
-fail the step, without coercion. Shell substitutions are quoted, and inserted
-values are never evaluated as further expressions. Legacy direct result
-references remain supported.
-
-An `artifact` is a nonempty relative path without `..`, not a file snapshot or
-upload; pipelines must retain the referenced file themselves. Selected command
-streams are limited to 64 KiB of UTF-8 combined (overflow fails and stops the command),
-and each JSON-encoded mapped output is limited to 64 KiB of UTF-8. Do not select
-streams/result fields containing secrets: explicit selection persists them in the journal.
-
-Mapped outputs live in the same durable completion checkpoint as the result.
-Resume uses the saved values without rerunning the producer or remapping its
-result. Refine starts a new round, so outputs are regenerated for that round;
-previous round checkpoints remain unchanged. As with other shell side effects,
-a failure before the completion checkpoint may rerun the command.
+Factory is a prototype, not a sandbox. Treat pipeline YAML and agent instructions as trusted executable project code. Steps run sequentially; there are no automatic triggers. Shell side effects may be repeated after interruptions, so make commands idempotent. Do not commit `.factory/state/` or persist secrets as outputs.

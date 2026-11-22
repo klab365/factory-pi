@@ -1,12 +1,10 @@
 [tools]
 bun = "1.4.4"
+node = "24.22.0"
 python = "3.13.16"
 
 [hooks]
 postinstall = "bun install --frozen-lockfile"
-
-[tasks]
-factory = "bun run src/cli.ts"
 
 [tasks.format]
 run = "bun run format"
@@ -31,3 +29,16 @@ depends = ["check-format", "lint", "tests", "typecheck", "validate"]
 
 [tasks.dev-pi]
 run = "bun run src/pi-test.ts"
+
+[tasks."docs:dev"]
+description = "Start the Starlight documentation dev server"
+run = "bun run docs:dev"
+
+[tasks."docs:build"]
+description = "Build the documentation for GitHub Pages"
+run = "bun run docs:build"
+
+[tasks."docs:preview"]
+description = "Build and preview the production documentation locally"
+depends = ["docs:build"]
+run = "bun run docs:preview"

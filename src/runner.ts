@@ -1,6 +1,5 @@
-#!/usr/bin/env bun
-import { initProject } from "./init";
-import { createAgentRuntime, loadAgentDefinition } from "./agent-runtime";
+import { shellSpec, validatePipeline, type ShellSpec } from "./pipeline-validation";
+import { createAgentRuntime } from "./agent-runtime";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { openJournal, appendEvent, type DurableJournal } from "./journal";
 
@@ -13,35 +12,11 @@ import {
   factoryFile,
   collectInputs,
 } from "./pipeline-inputs";
-import { createInterface } from "node:readline/promises";
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import { humanPrompt, humanResult, type HumanPrompt } from "./human";
-import { mapOutputs, validateOutputs, OUTPUT_LIMIT } from "./step-outputs";
+import { mapOutputs, OUTPUT_LIMIT } from "./step-outputs";
 const root = process.cwd();
-let requestHuman: ((prompt: HumanPrompt, key: string) => Promise<unknown>) | undefined;
-async function terminalHuman(prompt: HumanPrompt): Promise<unknown> {
-  if (!process.stdin.isTTY)
-    throw new Error(
-      "Human response required: use an interactive terminal or --human-response=<value> on resume",
-    );
-  const ui = createInterface({ input: process.stdin, output: process.stderr });
-  const controller = new AbortController();
-  ui.once("close", () => controller.abort());
-  try {
-    return await ui.question(
-      `${prompt.prompt}${prompt.choices ? ` (${prompt.choices.join(" / ")})` : ""}: `,
-      {
-        signal: controller.signal,
-      },
-    );
-  } catch (error) {
-    if (controller.signal.aborted) return undefined;
-    throw error;
-  } finally {
-    ui.close();
-  }
-}
 let eventSink: ((event: RecordValue) => void) | undefined;
 function emit(type: string, data: RecordValue) {
   eventSink?.({ type, ...data });
@@ -71,61 +46,6 @@ async function recordStep(
     journal.completed.delete(key);
     journal.results.delete(key);
   }
-}
-
-type ShellSpec = {
-  command: string;
-  workingDirectory: string;
-  env: Record<string, string>;
-  timeout?: number;
-  outputs: { stdout: boolean; stderr: boolean };
-};
-
-function shellSpec(raw: unknown, label: string): ShellSpec {
-  if (typeof raw === "string") {
-    return { command: raw, workingDirectory: ".", env: {}, outputs: { stdout: false, stderr: false } };
-  }
-  const value = object(raw, `Step '${label}' shell`);
-  const allowed = new Set(["command", "workingDirectory", "env", "timeout", "outputs"]);
-  for (const key of Object.keys(value)) {
-    if (!allowed.has(key)) fail(`Step '${label}' shell has unknown field '${key}'`);
-  }
-  const command = string(value.command, `Step '${label}' shell command`);
-  const workingDirectory =
-    value.workingDirectory === undefined
-      ? "."
-      : string(value.workingDirectory, `Step '${label}' shell workingDirectory`);
-  const env: Record<string, string> = {};
-  if (value.env !== undefined) {
-    for (const [key, rawValue] of Object.entries(object(value.env, `Step '${label}' shell env`))) {
-      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key))
-        fail(`Step '${label}' shell env has invalid variable '${key}'`);
-      env[key] = string(rawValue, `Step '${label}' shell env.${key}`);
-    }
-  }
-  let timeout: number | undefined;
-  if (value.timeout !== undefined) {
-    if (!Number.isInteger(value.timeout) || Number(value.timeout) < 1)
-      fail(`Step '${label}' shell timeout must be a positive integer in milliseconds`);
-    timeout = Number(value.timeout);
-  }
-  const outputs = { stdout: false, stderr: false };
-  if (value.outputs !== undefined) {
-    const selected = object(value.outputs, `Step '${label}' shell outputs`);
-    for (const [key, rawSelected] of Object.entries(selected)) {
-      if (key !== "stdout" && key !== "stderr")
-        fail(`Step '${label}' shell outputs has unknown stream '${key}'`);
-      if (typeof rawSelected !== "boolean") fail(`Step '${label}' shell outputs.${key} must be a boolean`);
-      if (key === "stdout") {
-        if (typeof rawSelected === "boolean") outputs.stdout = rawSelected;
-        else fail(`Step '${label}' shell outputs.stdout must be a boolean`);
-      } else {
-        if (typeof rawSelected === "boolean") outputs.stderr = rawSelected;
-        else fail(`Step '${label}' shell outputs.stderr must be a boolean`);
-      }
-    }
-  }
-  return { command, workingDirectory, env, ...(timeout === undefined ? {} : { timeout }), outputs };
 }
 
 async function runCommand(spec: ShellSpec, label: string): Promise<RecordValue> {
@@ -243,6 +163,7 @@ async function executePipeline(
   jobName: string,
   journal: DurableJournal,
   inputs: Record<string, string>,
+  requestHuman: HumanHandler,
 ): Promise<void> {
   const pipeline = loadYaml(factoryFile("pipelines", name, "yml"));
   if (!Array.isArray(pipeline.steps)) fail(`Pipeline '${name}' must define a steps array`);
@@ -303,10 +224,7 @@ async function executePipeline(
             ...prompt,
           });
           emit("pending-input", { runId: journal.runId, stepId, key, ...prompt });
-          result = humanResult(
-            prompt,
-            await (requestHuman ? requestHuman(prompt, key) : terminalHuman(prompt)),
-          );
+          result = humanResult(prompt, await requestHuman(prompt, key));
         } else {
           throw new Error(`Step '${label}' must define 'shell', 'agent', or 'human'`);
         }
@@ -385,25 +303,19 @@ function interpolate(
   );
 }
 
+export type HumanHandler = (prompt: HumanPrompt, key: string) => Promise<unknown>;
+
 export async function runPipeline(
   name: string,
   args: string[],
   selection?: { mode: "new" | "resume" | "refine"; runId?: string; instruction?: string; requestId?: string },
   onEvent?: (event: RecordValue) => void,
+  requestHuman: HumanHandler = async () => {
+    throw new Error("Human response required");
+  },
 ): Promise<void> {
   eventSink = onEvent;
-  const responseArg = args.find((arg) => arg.startsWith("--human-response="));
-  if (responseArg) {
-    let consumed = false;
-    requestHuman = async () => {
-      if (consumed) throw new Error("Another human response is required");
-      consumed = true;
-      return responseArg.slice("--human-response=".length);
-    };
-    args = args.filter((arg) => arg !== responseArg);
-  }
-  const pipeline = loadYaml(factoryFile("pipelines", name, "yml"));
-  validatePipeline(name, false);
+  const pipeline = validatePipeline(root, name);
   collectInputs(pipeline, args, false);
   const runtime = createAgentRuntime(root, pipeline);
   const workflowPath = `pipeline:${name}`;
@@ -419,7 +331,7 @@ export async function runPipeline(
   journal.harness.resume();
   try {
     console.log(`━━ Pipeline: ${name} ━━`);
-    await executePipeline(name, workflowPath, name, journal, inputs);
+    await executePipeline(name, workflowPath, name, journal, inputs, requestHuman);
     console.log("\n✓ Factory pipeline completed");
     await appendEvent(journal.indexConversation, "factory.run", {
       conversationId: journal.conversation.id,
@@ -431,105 +343,5 @@ export async function runPipeline(
     emit("completed", { runId: journal.runId });
   } finally {
     await journal.harness.close(BACKGROUND_CONTEXT);
-  }
-}
-
-function validatePipeline(name: string, announce = true): void {
-  const pipeline = loadYaml(factoryFile("pipelines", name, "yml"));
-  const definitions = pipeline.inputs === undefined ? {} : object(pipeline.inputs, "Pipeline inputs");
-  for (const [inputName, raw] of Object.entries(definitions)) {
-    const definition = object(raw, `Input '${inputName}'`);
-    if (definition.options !== undefined && !Array.isArray(definition.options))
-      fail(`Input '${inputName}' options must be a list`);
-  }
-  if (!Array.isArray(pipeline.steps) || pipeline.steps.length === 0) {
-    fail(`Pipeline '${name}' must define a non-empty steps array`);
-  }
-  const steps = (pipeline.steps as unknown[]).map((raw, index) =>
-    object(raw, `Pipeline '${name}' step ${index + 1}`),
-  );
-  const ids = new Set<string>();
-  for (const [index, step] of steps.entries()) {
-    const id = string(step.id, `Pipeline '${name}' step ${index + 1} id`);
-    if (ids.has(id)) fail(`Pipeline '${name}' has duplicate step id '${id}'`);
-    ids.add(id);
-    if (step.run !== undefined) fail(`Pipeline step '${id}' uses removed 'run'; use 'shell' instead`);
-    if (step.captureOutput !== undefined)
-      fail(`Pipeline step '${id}' uses removed 'captureOutput'; select streams with shell.outputs`);
-    if ([step.shell, step.agent, step.human].filter((value) => value !== undefined).length !== 1) {
-      fail(`Pipeline step '${id}' must define exactly one of 'shell', 'agent', or 'human'`);
-    }
-    if (step.shell !== undefined) {
-      shellSpec(step.shell, id);
-    } else if (typeof step.agent === "string") {
-      loadAgentDefinition(root, step.agent);
-      string(step.task, `Pipeline '${name}' step ${index + 1} task`);
-    } else if (step.human !== undefined) humanPrompt(step.human);
-    else fail(`Pipeline step '${id}' agent must be a string`);
-    if (step.maxVisits !== undefined && (!Number.isInteger(step.maxVisits) || Number(step.maxVisits) < 1)) {
-      fail(`Pipeline step '${id}' maxVisits must be a positive integer`);
-    }
-  }
-  for (const step of steps) {
-    if (step.transitions === undefined) continue;
-    const transitions = object(step.transitions, `Step '${String(step.id)}' transitions`);
-    if (Object.keys(transitions).length === 0) fail(`Step '${String(step.id)}' transitions cannot be empty`);
-    for (const [status, target] of Object.entries(transitions)) {
-      string(status, `Step '${String(step.id)}' transition status`);
-      if (typeof target !== "string" || (target !== "end" && !ids.has(target))) {
-        fail(`Transition '${status}' on '${String(step.id)}' targets an unknown step or 'end'`);
-      }
-    }
-  }
-  validateOutputs(steps);
-  if (announce) console.log(`✓ Pipeline valid: ${name}`);
-}
-
-if (import.meta.main) {
-  const [command, target, ...args] = Bun.argv.slice(2);
-  try {
-    if (command === "init") {
-      if (target) fail("Usage: factory init");
-      for (const name of initProject(root)) validatePipeline(name);
-      console.log(`Factory initialized in ${root}`);
-    } else if (command === "session") {
-      const lines = createInterface({ input: process.stdin });
-      const iterator = lines[Symbol.asyncIterator]();
-      const first = await iterator.next();
-      const request = object(JSON.parse(first.value ?? "null"), "Session request");
-      requestHuman = async (_prompt, key) => {
-        const next = await iterator.next();
-        if (next.done) return undefined;
-        const response = object(JSON.parse(next.value), "Human response");
-        if (response.key !== key) throw new Error("Human response does not match pending input");
-        return response.response;
-      };
-      console.log = (...values) => console.error(...values);
-      try {
-        await runPipeline(
-          string(request.pipeline, "Pipeline"),
-          Object.entries(request.inputs ?? {}).map(([key, value]) => `--${key}=${value}`),
-          {
-            mode: request.mode === "resume" || request.mode === "refine" ? request.mode : "new",
-            runId: string(request.runId, "Run ID"),
-            ...(typeof request.requestId === "string" ? { requestId: request.requestId } : {}),
-            ...(typeof request.instruction === "string" ? { instruction: request.instruction } : {}),
-          },
-          (event) => process.stdout.write(`${JSON.stringify(event)}\n`),
-        );
-      } finally {
-        lines.close();
-      }
-    } else if (command === "validate" && target) validatePipeline(target);
-    else if (command === "run" && target) await runPipeline(target, args);
-    else {
-      console.error(
-        "Usage: factory init | factory run <pipeline-name> [--input <value>] | factory validate <pipeline-name>",
-      );
-      process.exitCode = 2;
-    }
-  } catch (error) {
-    console.error(`\n✗ ${error instanceof Error ? error.message : String(error)}`);
-    process.exitCode = 1;
   }
 }

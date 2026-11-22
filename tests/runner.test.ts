@@ -5,12 +5,15 @@ import { describe, expect, test } from "bun:test";
 import { parse, stringify } from "yaml";
 
 const repository = resolve(import.meta.dir, "..");
-function runCli(cwd: string, ...args: string[]) {
-  const result = Bun.spawnSync([process.execPath, "run", `${repository}/src/cli.ts`, ...args], {
-    cwd,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+function runFixture(cwd: string, ...args: string[]) {
+  const result = Bun.spawnSync(
+    [process.execPath, "run", `${repository}/tests/fixtures/run-pipeline.ts`, ...args],
+    {
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  );
   const decoder = new TextDecoder();
   return {
     exitCode: result.exitCode,
@@ -29,19 +32,19 @@ function fixture(pipeline: string, check: (root: string) => void) {
   }
 }
 
-describe("factory CLI", () => {
+describe("factory runner", () => {
   test("validates the software-factory pipeline", () => {
-    const result = runCli(repository, "validate", "software-factory");
+    const result = runFixture(repository, "validate", "software-factory");
     expect(result.exitCode).toBe(0);
     expect(result.output).toContain("Pipeline valid: software-factory");
   });
 
   test("rejects unknown inputs and requires inputs on new runs", () => {
     fixture("inputs:\n  goal: {}\nsteps:\n  - id: work\n    shell: 'true'\n", (root) => {
-      expect(runCli(root, "run", "test", "--unknown=value").output).toContain(
+      expect(runFixture(root, "run", "test", "--unknown=value").output).toContain(
         "Unknown pipeline input: unknown",
       );
-      const result = runCli(root, "run", "test");
+      const result = runFixture(root, "run", "test");
       expect(result.exitCode).toBe(1);
       expect(result.output).toContain("Missing required input 'goal'");
     });
@@ -66,7 +69,7 @@ describe("factory CLI", () => {
   ])("validates before executing: %s", (pipeline, message) => {
     fixture(pipeline, (root) => {
       for (const command of ["validate", "run"]) {
-        const result = runCli(root, command, "test");
+        const result = runFixture(root, command, "test");
         expect(result.exitCode).toBe(1);
         expect(result.output).toContain(message);
         expect(existsSync(`${root}/unwanted`)).toBe(false);
@@ -84,7 +87,7 @@ describe("factory CLI", () => {
           "---\nname: builder\nskills: [missing]\n---\nImplement\n",
         );
         for (const command of ["validate", "run"]) {
-          const result = runCli(root, command, "test");
+          const result = runFixture(root, command, "test");
           expect(result.exitCode).toBe(1);
           expect(result.output).toContain("cannot load 'missing'");
           expect(existsSync(`${root}/unwanted`)).toBe(false);
@@ -103,10 +106,10 @@ describe("factory CLI", () => {
     transitions: {completed: work}
 `,
       (root) => {
-        const first = runCli(root, "run", "test");
+        const first = runFixture(root, "run", "test");
         expect(first.exitCode).toBe(1);
         expect(first.output).toContain("exceeded maxVisits (2)");
-        const resumed = runCli(root, "run", "test");
+        const resumed = runFixture(root, "run", "test");
         expect(resumed.exitCode).toBe(1);
         expect(resumed.output).toContain("reusing durable result");
         expect(resumed.output).toContain("exceeded maxVisits (2)");
@@ -127,10 +130,10 @@ steps:
     shell: 'if [ ! -e retried ]; then touch retried; exit 1; fi; printf "%s" \${{ inputs.goal }} > resumed-goal'
 `,
       (root) => {
-        const first = runCli(root, "run", "test", "--goal=original");
+        const first = runFixture(root, "run", "test", "--goal=original");
         expect(first.exitCode).toBe(1);
         expect(first.output).toContain("exit code 1");
-        const resumed = runCli(root, "run", "test");
+        const resumed = runFixture(root, "run", "test");
         expect(resumed.exitCode).toBe(0);
         expect(resumed.output).toContain("using its saved inputs");
         expect(readFileSync(`${root}/count`, "utf8")).toBe("saved\n");
@@ -169,22 +172,22 @@ test("software-factory sends requested human changes to the next builder visit",
     },
   ];
   fixture(stringify(pipeline), (root) => {
-    const start = runCli(root, "run", "test", "--goal=Test the loop");
+    const start = runFixture(root, "run", "test", "--goal=Test the loop");
     expect(start.output).toContain("Human response required");
-    const request = runCli(root, "run", "test", "--human-response=change_requested");
+    const request = runFixture(root, "run", "test", "--human-response=change_requested");
     expect(request.output).toContain("Another human response is required");
     expect(readFileSync(`${root}/builder-task`, "utf8")).not.toContain("Add a regression test");
-    const feedback = runCli(root, "run", "test", "--human-response=Add a regression test");
+    const feedback = runFixture(root, "run", "test", "--human-response=Add a regression test");
     expect(feedback.output).toContain("Another human response is required");
     expect(readFileSync(`${root}/builder-task`, "utf8")).toContain("Add a regression test");
     expect(existsSync(`${root}/published`)).toBe(false);
-    const approved = runCli(root, "run", "test", "--human-response=approved");
+    const approved = runFixture(root, "run", "test", "--human-response=approved");
     expect(approved.exitCode).toBe(0);
     expect(approved.output).toContain("https://example.test/pr/1");
     expect(readFileSync(`${root}/published`, "utf8")).toBe("https://example.test/pr/1\n");
   });
   fixture(stringify(pipeline), (root) => {
-    const rejected = runCli(root, "run", "test", "--goal=Reject", "--human-response=rejected");
+    const rejected = runFixture(root, "run", "test", "--goal=Reject", "--human-response=rejected");
     expect(rejected.exitCode).toBe(0);
     expect(existsSync(`${root}/published`)).toBe(false);
   });
@@ -201,8 +204,8 @@ test("selected shell output is available from the durable result after resume", 
     shell: 'if [ ! -e retried ]; then touch retried; exit 1; fi; printf "%s" \${{ steps.capture.stdout }} > url'
 `,
     (root) => {
-      expect(runCli(root, "run", "test").exitCode).toBe(1);
-      const resumed = runCli(root, "run", "test");
+      expect(runFixture(root, "run", "test").exitCode).toBe(1);
+      const resumed = runFixture(root, "run", "test");
       expect(resumed.exitCode).toBe(0);
       expect(resumed.output).not.toContain("▶ capture");
       expect(readFileSync(`${root}/url`, "utf8")).toBe("https://example.test/pr/1");
@@ -225,7 +228,7 @@ steps:
 `,
     (root) => {
       mkdirSync(`${root}/subdir`);
-      const result = runCli(root, "run", "test", "--goal=passed");
+      const result = runFixture(root, "run", "test", "--goal=passed");
       expect(result.exitCode).toBe(0);
       expect(readFileSync(`${root}/result`, "utf8")).toBe("passed|problem");
     },
@@ -245,7 +248,7 @@ test("shell timeout terminates descendant processes", async () => {
 `,
   );
   try {
-    const result = runCli(root, "run", "test");
+    const result = runFixture(root, "run", "test");
     expect(result.exitCode).toBe(1);
     expect(result.output).toContain("timed out after 80 ms");
     await new Promise((done) => setTimeout(done, 500));
@@ -267,12 +270,12 @@ test("human checkpoint resumes and does not repeat downstream side effects", () 
     shell: echo published >> effects
 `,
     (root) => {
-      const pending = runCli(root, "run", "test");
+      const pending = runFixture(root, "run", "test");
       expect(pending.exitCode).toBe(1);
       expect(pending.output).toContain("Human response required");
       expect(existsSync(`${root}/effects`)).toBe(false);
-      expect(runCli(root, "run", "test", "--human-response=invalid").exitCode).toBe(1);
-      const accepted = runCli(root, "run", "test", "--human-response=approved");
+      expect(runFixture(root, "run", "test", "--human-response=invalid").exitCode).toBe(1);
+      const accepted = runFixture(root, "run", "test", "--human-response=approved");
       expect(accepted.exitCode).toBe(0);
       expect(readFileSync(`${root}/effects`, "utf8")).toBe("published\n");
     },
@@ -293,8 +296,8 @@ test("typed outputs are restored on resume without repeating producers", () => {
     shell: 'if [ ! -e retried ]; then touch retried; exit 1; fi; printf "%s:%s" \${{ steps.capture.outputs.report }} \${{ steps.capture.outputs.code }} > result'
 `,
     (root) => {
-      expect(runCli(root, "run", "test").exitCode).toBe(1);
-      const resumed = runCli(root, "run", "test");
+      expect(runFixture(root, "run", "test").exitCode).toBe(1);
+      const resumed = runFixture(root, "run", "test");
       expect(resumed.exitCode).toBe(0);
       expect(readFileSync(`${root}/effects`, "utf8")).toBe("run\n");
       expect(readFileSync(`${root}/result`, "utf8")).toBe("report.json:0");
@@ -321,7 +324,7 @@ test("inserted output and input values are literal data, not new expressions or 
     (root) => {
       const payload = `\${{ inputs.secret }} \${{ steps.produce.stdout }} '; touch unwanted; #`;
       writeFileSync(`${root}/payload`, payload);
-      const result = runCli(root, "run", "test", "--secret=do-not-expand", `--value=${payload}`);
+      const result = runFixture(root, "run", "test", "--secret=do-not-expand", `--value=${payload}`);
       expect(result.exitCode).toBe(0);
       expect(readFileSync(`${root}/received`, "utf8")).toBe(payload);
       expect(readFileSync(`${root}/input-value`, "utf8")).toBe(payload);
@@ -343,7 +346,7 @@ test("selected streams enforce a combined UTF-8 byte limit", () => {
     }),
     (root) => {
       writeFileSync(`${root}/payload`, "é".repeat(32769));
-      const result = runCli(root, "run", "test");
+      const result = runFixture(root, "run", "test");
       expect(result.exitCode).toBe(1);
       expect(result.output).toContain("exceeds output limit");
       expect(existsSync(`${root}/unwanted`)).toBe(false);
@@ -384,7 +387,7 @@ test("replays saved typed agent outputs without a model call or remapping", asyn
       result: { status: "completed", outputs: { value: "original mapped value" } },
     });
     await journal.harness.close(BACKGROUND_CONTEXT);
-    const resumed = runCli(root, "run", "test");
+    const resumed = runFixture(root, "run", "test");
     expect(resumed.exitCode).toBe(0);
     expect(resumed.output).toContain("reusing durable result");
     expect(readFileSync(`${root}/received`, "utf8")).toBe("original mapped value");
@@ -411,7 +414,7 @@ test("refine regenerates round-local outputs and repeated refine requests replay
     }),
     (root) => {
       const session = (request: object) =>
-        Bun.spawnSync([process.execPath, `${repository}/src/cli.ts`, "session"], {
+        Bun.spawnSync([process.execPath, `${repository}/src/worker.ts`], {
           cwd: root,
           stdin: Buffer.from(`${JSON.stringify({ pipeline: "test", runId: "outputs", ...request })}\n`),
           stdout: "pipe",

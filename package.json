@@ -2,15 +2,16 @@
   "name": "pi-software-factory",
   "type": "module",
   "scripts": {
-    "factory": "bun run src/cli.ts",
-    "validate": "bun run src/cli.ts validate software-factory",
+    "validate": "bun run scripts/validate-pipelines.ts",
     "format": "biome format --write src tests",
     "check-format": "biome format src tests",
     "lint": "biome lint src tests",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "check": "bun run check-format && bun run lint && bun run test && bun run typecheck && bun run validate",
-    "build": "bun build --compile src/cli.ts --outfile dist/factory"
+    "docs:dev": "astro dev",
+    "docs:build": "astro build",
+    "docs:preview": "astro preview"
   },
   "dependencies": {
     "@earendil-works/chord": "^1.5.2",
@@ -23,15 +24,16 @@
     "yaml": "^2.8.1"
   },
   "devDependencies": {
+    "@astrojs/markdown-remark": "^7.3.0",
+    "@astrojs/starlight": "^0.43.1",
     "@biomejs/biome": "^2.6.8",
     "@types/bun": "latest",
-    "typescript": "^7.0.2"
+    "astro": "^7.4.13",
+    "typescript": "^7.0.2",
+    "unist-util-visit": "^5.1.0"
   },
   "version": "0.1.0",
-  "description": "Durable pipeline runner and Pi extension for project-local factories",
-  "bin": {
-    "factory": "src/cli.ts"
-  },
+  "description": "Pi extension for resumable project-local workflows",
   "files": [
     "src",
     "README.md"
@@ -40,6 +42,10 @@
     "extensions": [
       "./src/pi-extension.ts"
     ]
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
   },
   "repository": {
     "type": "git",

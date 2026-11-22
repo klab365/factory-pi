@@ -1,10 +1,9 @@
 import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { resolve } from "node:path";
-import { parse } from "yaml";
-import { object } from "./pipeline-inputs";
+import { existsSync } from "node:fs";
+import { initProject, listPipelines } from "./init";
+import { validatePipeline } from "./pipeline-validation";
 import {
   chooseRun,
   workspaceIdentity,
@@ -145,7 +144,7 @@ export default function factoryExtension(pi: ExtensionAPI) {
     }
   });
   pi.registerCommand("factory", {
-    description: "Factory run [pipeline] | resume [runId] | refine [runId]",
+    description: "Factory init | validate [pipeline] | run [pipeline] | resume [runId] | refine [runId]",
     handler: async (args, ctx) => {
       let replacing = false;
       try {
@@ -154,18 +153,23 @@ export default function factoryExtension(pi: ExtensionAPI) {
         const root = ctx.cwd;
         const { command, target } = parseCommand(args);
         await ctx.waitForIdle();
-        if (command === "run") {
-          const folder = resolve(ctx.cwd, ".factory/pipelines");
-          const pipelines = readdirSync(folder)
-            .filter((name) => name.endsWith(".yml"))
-            .map((name) => name.slice(0, -4));
+        if (command === "init") {
+          for (const name of initProject(root)) validatePipeline(root, name);
+          ctx.ui.notify(`Factory initialized in ${root}`, "info");
+          return;
+        }
+        if (command === "run" || command === "validate") {
+          const pipelines = listPipelines(root);
+          if (!pipelines.length)
+            throw new Error("No Factory pipelines. Use /factory init to create a starter.");
           const pipeline = target ?? (await ctx.ui.select("Factory pipeline", pipelines));
           if (!pipeline) return;
           if (!pipelines.includes(pipeline)) throw new Error(`Unknown pipeline '${pipeline}'`);
-          const definition = object(
-            parse(readFileSync(resolve(folder, `${pipeline}.yml`), "utf8")),
-            "Pipeline",
-          );
+          const definition = validatePipeline(root, pipeline);
+          if (command === "validate") {
+            ctx.ui.notify(`Pipeline valid: ${pipeline}`, "info");
+            return;
+          }
           const inputs = await promptInputs(definition, ctx.ui);
           if (!inputs) return;
           const runId = crypto.randomUUID();
@@ -201,7 +205,7 @@ export default function factoryExtension(pi: ExtensionAPI) {
           });
           if (result.cancelled) return;
         } else {
-          const mode = command as "resume" | "refine";
+          const mode = command;
           const run = await chooseRun(readRuns(ctx.cwd), mode, target, ctx.ui, workspaceIdentity(root));
           if (!run) return;
           const instruction =

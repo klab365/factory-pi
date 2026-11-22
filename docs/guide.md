@@ -54,9 +54,7 @@ mise run dev-pi
 
 In Pi, run `/factory run software-factory` and enter your goal. This repository's pipeline sends the change from builder to reviewer. A review requesting changes returns to the builder; approval opens a human checkpoint. A human change request collects free text and sends it back with reviewer feedback. Visit limits bound the loop. A human rejection ends the run without publishing.
 
-After human approval, `publish` runs `scripts/publish-pr.py` with Python's standard library. It commits **all** worktree changes and pushes the current branch to `origin` without force-pushing. Start from a clean worktree on a separate branch. The script requires authenticated `gh`, Git push access, and a GitHub `origin`. It refuses the default branch and detached HEAD.
-
-The reviewer provides `prTitle`, `prSummary`, and `prVerification`, which are shown for approval. Missing fields stop publishing before the commit. The title is also the commit subject. A new PR includes Summary and Verification sections and closes issues referenced in the goal when their URLs point to the same repository. If a PR is already open, the push updates its commits but preserves its title and body. Resume can reuse the existing commit and PR if the branch and worktree have not changed.
+After human approval, the `publisher` agent commits the approved changes, pushes the current feature branch to `origin` without force-pushing, and creates a pull request if one is not already open. Start from a clean worktree on a separate branch. The publisher requires authenticated `gh` and Git push access. It uses the approved Conventional Commit title as the commit subject and PR title; a new PR includes the approved summary and verification, and closes only issues from the same repository that were referenced in the goal. If a PR is already open, it returns that PR without changing its title or body. Resume can reuse the existing commit and PR if the branch and worktree have not changed.
 
 ## Skills
 

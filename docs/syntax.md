@@ -91,7 +91,11 @@ inputs:
     required: false
 ```
 
-Each step needs a unique `id` and **exactly one** of `shell`, `agent`, or `human`. Optional fields are `name`, `outputs`, `transitions`, and `maxVisits`. Agent steps also require `task`. `maxVisits` is a positive integer, defaults to **1**, and limits visits per round.
+Each step needs a unique `id` and **exactly one** of `shell`, `agent`, or `human`. Optional fields are `name`, `outputs`, `transitions`, and `maxVisits`. Agent steps also require `task`.
+
+For **agent steps**, omitting `maxVisits` allows **unlimited visits**. Shell and human steps still default to **1** visit. When provided, `maxVisits` must be a positive integer and limits visits per round; validation rejects zero, negative, fractional, and nonnumeric values (including `null`). Resume preserves visit counts; refine starts a new round with fresh counts. Existing explicit limits remain enforced.
+
+Unbounded agent cycles can run indefinitely and consume model tokens, time, and money. Use explicit limits for bounded workflows, and ensure cycles have an exit transition. A cycle through shell or human steps also needs appropriate explicit limits on those steps. The example above deliberately bounds both implementation and acceptance to three visits.
 
 Without `transitions`, execution advances to the next listed step or ends after the last. With `transitions`, the result status must have an entry pointing to a step ID or the reserved `end`. A missing entry or execution failure stops the run; there is no implicit error branch. The old `run:` and `captureOutput:` fields are rejected.
 

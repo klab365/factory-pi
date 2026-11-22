@@ -97,6 +97,84 @@ describe("factory runner", () => {
     );
   });
 
+  test.each([0, -1, 1.5, "2", null])("rejects invalid agent maxVisits: %j", (maxVisits) => {
+    fixture(
+      stringify({ steps: [{ id: "work", agent: "builder", task: "Implement", maxVisits }] }),
+      (root) => {
+        mkdirSync(`${root}/.factory/agents`, { recursive: true });
+        writeFileSync(`${root}/.factory/agents/builder.md`, "---\nname: builder\n---\nImplement\n");
+        for (const command of ["validate", "run"]) {
+          const result = runFixture(root, command, "test", "--stub-agents");
+          expect(result.exitCode).toBe(1);
+          expect(result.output).toContain("maxVisits must be a positive integer");
+          expect(existsSync(`${root}/agent-visits`)).toBe(false);
+          expect(existsSync(`${root}/.factory/state`)).toBe(false);
+        }
+      },
+    );
+  });
+
+  test.each([undefined, 1, 2])("agent visit limit %s is preserved across resume", (maxVisits) => {
+    fixture(
+      `steps:
+  - id: work
+    agent: builder
+    task: Implement
+    ${maxVisits === undefined ? "" : `maxVisits: ${maxVisits}`}
+  - id: checkpoint
+    maxVisits: 6
+    human:
+      prompt: Continue?
+      choices: [again, done]
+    transitions: {again: work, done: end}
+`,
+      (root) => {
+        mkdirSync(`${root}/.factory/agents`, { recursive: true });
+        writeFileSync(`${root}/.factory/agents/builder.md`, "---\nname: builder\n---\nImplement\n");
+        expect(runFixture(root, "validate", "test").exitCode).toBe(0);
+        const first = runFixture(root, "run", "test", "--stub-agents");
+        expect(first.exitCode).toBe(1);
+        expect(first.output).toContain("Human response required");
+        const visits = maxVisits ?? 5;
+        for (let visit = 2; visit <= visits; visit++) {
+          const next = runFixture(root, "run", "test", "--stub-agents", "--human-response=again");
+          expect(next.exitCode).toBe(1);
+          expect(next.output).toContain("Another human response is required");
+        }
+        const final = runFixture(
+          root,
+          "run",
+          "test",
+          "--stub-agents",
+          `--human-response=${maxVisits === undefined ? "done" : "again"}`,
+        );
+        if (maxVisits === undefined) {
+          expect(final.exitCode).toBe(0);
+        } else {
+          expect(final.exitCode).toBe(1);
+          expect(final.output).toContain(`exceeded maxVisits (${maxVisits})`);
+          const retry = runFixture(root, "run", "test", "--stub-agents");
+          expect(retry.exitCode).toBe(1);
+          expect(retry.output).toContain(`exceeded maxVisits (${maxVisits})`);
+        }
+        const calls = readFileSync(`${root}/agent-visits`, "utf8").trim().split("\n");
+        expect(calls).toHaveLength(visits);
+        expect(new Set(calls).size).toBe(visits);
+        for (const [index, call] of calls.entries()) {
+          expect(call).toEndWith(`-work-${index + 1}`);
+        }
+      },
+    );
+  });
+
+  test("shell steps still default to one visit", () => {
+    fixture("steps:\n  - id: work\n    shell: 'true'\n    transitions: {completed: work}\n", (root) => {
+      const result = runFixture(root, "run", "test");
+      expect(result.exitCode).toBe(1);
+      expect(result.output).toContain("exceeded maxVisits (1)");
+    });
+  });
+
   test("routes shell outcomes and preserves maxVisits across resume", () => {
     fixture(
       `steps:

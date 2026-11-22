@@ -58,6 +58,15 @@ export function shellSpec(raw: unknown, label: string): ShellSpec {
   return { command, workingDirectory, env, ...(timeout === undefined ? {} : { timeout }), outputs };
 }
 
+// Omitted agent limits are unbounded; other step kinds retain their one-visit default.
+export function stepMaxVisits(step: RecordValue, id: string): number | undefined {
+  if (step.maxVisits === undefined) return typeof step.agent === "string" ? undefined : 1;
+  if (typeof step.maxVisits !== "number" || !Number.isInteger(step.maxVisits) || step.maxVisits < 1) {
+    return fail(`Step '${id}' maxVisits must be a positive integer`);
+  }
+  return step.maxVisits;
+}
+
 export function validatePipeline(root: string, name: string): RecordValue {
   const pipeline = loadYaml(factoryFile("pipelines", name, "yml", root));
   const definitions = pipeline.inputs === undefined ? {} : object(pipeline.inputs, "Pipeline inputs");
@@ -90,9 +99,7 @@ export function validatePipeline(root: string, name: string): RecordValue {
       string(step.task, `Pipeline '${name}' step ${index + 1} task`);
     } else if (step.human !== undefined) humanPrompt(step.human);
     else fail(`Pipeline step '${id}' agent must be a string`);
-    if (step.maxVisits !== undefined && (!Number.isInteger(step.maxVisits) || Number(step.maxVisits) < 1)) {
-      fail(`Pipeline step '${id}' maxVisits must be a positive integer`);
-    }
+    stepMaxVisits(step, id);
   }
   for (const step of steps) {
     if (step.transitions === undefined) continue;

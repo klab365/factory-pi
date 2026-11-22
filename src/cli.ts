@@ -16,6 +16,7 @@ import { createInterface } from "node:readline/promises";
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import { humanPrompt, humanResult, type HumanPrompt } from "./human";
+import { mapOutputs, validateOutputs, OUTPUT_LIMIT } from "./step-outputs";
 const root = process.cwd();
 let requestHuman: ((prompt: HumanPrompt, key: string) => Promise<unknown>) | undefined;
 async function terminalHuman(prompt: HumanPrompt): Promise<unknown> {
@@ -137,6 +138,7 @@ async function runCommand(spec: ShellSpec, label: string): Promise<RecordValue> 
   });
   let stdout = "";
   let stderr = "";
+  let outputOverflow = false;
   let timedOut = false;
   let stopping = false;
   let killTimer: ReturnType<typeof setTimeout> | undefined;
@@ -147,7 +149,10 @@ async function runCommand(spec: ShellSpec, label: string): Promise<RecordValue> 
         process.kill(-child.pid, signal);
         return;
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+        // A fast command may already have exited when buffered output overflows.
+        // Some platforms deny signaling the now-empty group; fall back to the child.
+        const code = error instanceof Error && "code" in error ? error.code : undefined;
+        if (code !== "ESRCH" && code !== "EPERM") throw error;
       }
     }
     child.kill(signal);
@@ -169,23 +174,25 @@ async function runCommand(spec: ShellSpec, label: string): Promise<RecordValue> 
   const onSignal = () => stop();
   process.once("SIGINT", onSignal);
   process.once("SIGTERM", onSignal);
+  let capturedBytes = 0;
   const consume = (stream: NodeJS.ReadableStream, kind: "stdout" | "stderr") => {
     const decoder = new TextDecoder();
-    stream.on("data", (chunk: Buffer) => {
-      const text = decoder.decode(chunk, { stream: true });
-      if (kind === "stdout") stdout += spec.outputs.stdout ? text : "";
-      else stderr += spec.outputs.stderr ? text : "";
+    const accept = (text: string) => {
+      if (spec.outputs[kind] && !outputOverflow) {
+        capturedBytes += Buffer.byteLength(text, "utf8");
+        if (capturedBytes > OUTPUT_LIMIT) {
+          outputOverflow = true;
+          stdout = "";
+          stderr = "";
+          stop();
+        } else if (kind === "stdout") stdout += text;
+        else stderr += text;
+      }
       if (eventSink) emit("output", { stream: kind, text });
       else (kind === "stdout" ? process.stdout : process.stderr).write(text);
-    });
-    stream.on("end", () => {
-      const value = decoder.decode();
-      if (!value) return;
-      if (kind === "stdout") stdout += spec.outputs.stdout ? value : "";
-      else stderr += spec.outputs.stderr ? value : "";
-      if (eventSink) emit("output", { stream: kind, text: value });
-      else (kind === "stdout" ? process.stdout : process.stderr).write(value);
-    });
+    };
+    stream.on("data", (chunk: Buffer) => accept(decoder.decode(chunk, { stream: true })));
+    stream.on("end", () => accept(decoder.decode()));
   };
   consume(child.stdout, "stdout");
   consume(child.stderr, "stderr");
@@ -202,6 +209,7 @@ async function runCommand(spec: ShellSpec, label: string): Promise<RecordValue> 
       child.once("close", done);
     });
     await killPromise;
+    if (outputOverflow) fail(`Step '${label}' exceeds output limit`);
     if (timedOut) fail(`Step '${label}' timed out after ${spec.timeout} ms`);
     if (stopping) fail(`Step '${label}' was cancelled`);
     if (code !== 0) fail(`Step '${label}' failed with exit code ${code}`);
@@ -301,6 +309,7 @@ async function executePipeline(
         } else {
           throw new Error(`Step '${label}' must define 'shell', 'agent', or 'human'`);
         }
+        if (step.outputs !== undefined) result = { ...result, outputs: mapOutputs(step, result) };
         await recordStep(journal, key, stepId, visit, "completed", result);
       } catch (error) {
         await recordStep(journal, key, stepId, visit, "failed");
@@ -348,16 +357,31 @@ function interpolate(
   quoteForShell: boolean,
   stepResults: Map<string, RecordValue> = new Map(),
 ): string {
-  return template
-    .replace(/\$\{\{\s*inputs\.([\w-]+)\s*\}\}/g, (_match, key: string) => {
-      const value = inputs[key];
-      if (value === undefined) fail(`No value provided for input '${key}'`);
-      return quoteForShell ? shellQuote(value) : value;
-    })
-    .replace(/\$\{\{\s*steps\.([\w-]+)\.([\w-]+)\s*\}\}/g, (_match, stepId: string, field: string) => {
-      const value = stepResults.get(stepId)?.[field];
-      return typeof value === "string" ? (quoteForShell ? shellQuote(value) : value) : "";
-    });
+  // Match only the original template: inserted values are data, never expressions.
+  return template.replace(
+    /\$\{\{\s*(?:inputs\.([\w-]+)|steps\.([\w-]+)\.(?:outputs\.([\w-]+)|([\w-]+)))\s*\}\}/g,
+    (_match, input: string | undefined, stepId: string, output: string | undefined, field: string) => {
+      let value: unknown;
+      if (input !== undefined) {
+        value = inputs[input];
+        if (value === undefined) fail(`No value provided for input '${input}'`);
+      } else if (output !== undefined) {
+        const outputs = stepResults.get(stepId)?.outputs;
+        value =
+          outputs && typeof outputs === "object" && !Array.isArray(outputs) && Object.hasOwn(outputs, output)
+            ? Reflect.get(outputs, output)
+            : undefined;
+        if (value === undefined) fail(`No value available for output '${stepId}.${output}'`);
+        if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean")
+          fail(`Invalid saved output '${stepId}.${output}'`);
+      } else {
+        value = stepResults.get(stepId)?.[field];
+        if (typeof value !== "string") return "";
+      }
+      const text = String(value);
+      return quoteForShell ? shellQuote(text) : text;
+    },
+  );
 }
 
 export async function runPipeline(
@@ -456,6 +480,7 @@ function validatePipeline(name: string, announce = true): void {
       }
     }
   }
+  validateOutputs(steps);
   if (announce) console.log(`✓ Pipeline valid: ${name}`);
 }
 

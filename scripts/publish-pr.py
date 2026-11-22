@@ -32,7 +32,7 @@ def git(*args: str, show_output: bool = False) -> str:
 
 def issue_links(goal: str, repository: str) -> list[str]:
     refs = dict.fromkeys(
-        f"Closes #{number}"
+        f"Close #{number}"
         for repo, number in ISSUE_URL.findall(goal)
         if repo.lower() == repository.lower()
     )
@@ -82,7 +82,7 @@ def publish(goal: str, subject: str, pr_summary: str, pr_verification: str) -> s
     if existing:
         return existing
 
-    body = "\n\n".join([f"## Summary\n{summary}", *issue_links(goal, repository), f"## Verification\n{verification}"])
+    body = "\n\n".join([f"## Summary\n{summary}", f"## Verification\n{verification}", *issue_links(goal, repository)])
     return command(
         "gh", "pr", "create", "--repo", repository, "--head", branch,
         "--base", base, "--title", title, "--body", body,

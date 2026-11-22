@@ -44,7 +44,7 @@ steps:
         the request, issue URL, or a generic title.
       - `prSummary`: Markdown bullets describing the changes in the diff.
       - `prVerification`: Markdown bullets with the checks actually run and their results.
-      Omit section headings and issue closing references from these fields; the publisher adds them.
+      - `Close #<id>` at the end of the description.
 
   - id: accept
     name: Human acceptance

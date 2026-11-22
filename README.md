@@ -1,5 +1,9 @@
 # Factory for Pi
 
+[![Documentation](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://klab365.github.io/factory-pi/)
+
+**[Documentation](https://klab365.github.io/factory-pi/)** · [Getting started & automatic setup](https://klab365.github.io/factory-pi/getting-started/) · [Syntax reference](https://klab365.github.io/factory-pi/syntax/)
+
 **Resumable software workflows inside the Pi coding agent.**
 
 Define shell commands, agent tasks, and human checkpoints in project-local YAML. Factory records progress and agent history so you can resume interrupted work or refine completed runs.
@@ -64,10 +68,9 @@ Ask me to approve this plan. If I request changes, revise the plan and ask again
 
 | Page | What it covers |
 | --- | --- |
-| [User guide](docs/guide.md) | Pi setup, `/factory` commands, and credentials |
-| [Syntax reference](docs/syntax.md) | Pipelines, agents, skills, templates, and outputs |
-| [Architecture](docs/architecture.md) | The extension, runner process, state isolation, and replay |
-**[Documentation](https://klab365.github.io/factory-pi/)** · [Getting started & automatic setup](https://klab365.github.io/factory-pi/getting-started/) · [Syntax reference](https://klab365.github.io/factory-pi/syntax/)
+| [User guide](https://klab365.github.io/factory-pi/guide/) | Pi setup, `/factory` commands, and credentials |
+| [Syntax reference](https://klab365.github.io/factory-pi/syntax/) | Pipelines, agents, skills, templates, and outputs |
+| [Architecture](https://klab365.github.io/factory-pi/architecture/) | The extension, runner process, state isolation, and replay |
 
 ## Development
 

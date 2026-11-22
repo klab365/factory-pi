@@ -1,166 +1,111 @@
 ---
-layout: default
-title: Architektur
+title: Architecture
+description: Execution, state isolation, recovery, and replay in Factory.
 ---
-{% raw %}
 
+Factory is a Pi extension backed by a sequential, project-local pipeline runner built on Pi Durable. YAML defines control flow; Markdown defines agent instructions. The extension owns the interactive experience, while a separate runner process executes the pipeline. Factory has no public command-line executable.
 
-# Architektur
-
-Factory ist ein sequenzieller, projektlokaler Pipeline-Runner auf dem
-**Pi-Durable-Harness**. YAML beschreibt den Kontrollfluss, Markdown die Agent-
-Instruktionen. Die CLI ist die Ausführungsgrenze; die Pi-Extension ist ein
-interaktives Frontend, kein zweiter Runner.
-
-## Systemübersicht
+## System overview
 
 ```text
-Terminal                         Pi UI (/factory)
-   │                                  │
-   │                          pi-extension.ts / pi-session.ts
-   │                                  │ JSON stdin / JSONL stdout
-   └──────────────────────► cli.ts ◄───┘
-                               │
-                  Validierung + Input-Erfassung
-                               │
-                   sequenzieller Step-Dispatcher
-                      /        |         \
-               bash -lc    Agent-Turn   Human-Checkpoint
-                               │
-                        agent-runtime.ts
-                               │
-                       Pi Durable Harness
-                               │
-                  journal.ts + run-storage.ts
-                               │
-                  .factory/state/durable/*.jsonl
+                           Pi UI (/factory)
+                                        │
+                           pi-extension.ts / pi-session.ts
+                                        │ JSON stdin / JSONL stdout
+                                    worker.ts
+                                        │
+                                    runner.ts
+                                        │
+                              Validation and inputs
+                                        │
+                               Sequential dispatcher
+                              /         |          \
+                       bash -lc      Agent turn   Human checkpoint
+                                        │
+                                 agent-runtime.ts
+                                        │
+                                Pi Durable harness
+                                        │
+                            journal.ts + run-storage.ts
+                                        │
+                          .factory/state/durable/*.jsonl
 ```
 
-CLI, Extension und Runtime stammen aus dem installierten Paket; Konfiguration,
-Arbeitsverzeichnis und Zustand stammen aus dem **aktuellen Zielprojekt**.
-Es gibt keinen zentralen Factory-Server und keine Datenbank außerhalb des lokalen Journals.
+The installed package provides the extension, worker, and runtime. Configuration, the working directory, and run state come from the **target project**. There is no central Factory server or database outside the local journal.
 
-## Module und Verantwortung
+## Module boundaries
 
-| Modul unter `src/` | Verantwortung |
+| Module under `src/` | Responsibility |
 | --- | --- |
-| `cli.ts` | Commands, Preflight, Shell-Prozesse, Step-Dispatcher, Übergänge und Events |
-| `pipeline-inputs.ts` | YAML laden, Pfade begrenzen, CLI-Inputs erfassen |
-| `agent-runtime.ts` | Agent-Definitionen, Modell-/Tool-Konfiguration, Handoffs, Ergebnisparsing |
-| `skills.ts` | Projektlokale Skills validieren und Instruktionen zusammensetzen |
-| `human.ts` | Prompts und Antworten validieren |
-| `step-outputs.ts` | Output-Deklarationen, Pfadabhängigkeiten und Laufzeittypen prüfen |
-| `journal.ts` | Run-/Agent-Conversations, Cursor und Checkpoints speichern/rekonstruieren |
-| `run-storage.ts` | Recovery und Input-Admission auf den ausgewählten Conversation-Baum begrenzen |
-| `pi-extension.ts` | Pi-Kommandos, Session-Zuordnung, UI und Tool-Integration |
-| `pi-session.ts` | Child-Prozess, Event-Protokoll und Prozessbereinigung |
-| `pi-credentials.ts` | Provider-Credentials für den Harness |
-| `init.ts` | Nicht destruktiver Projekt-Starter |
-| `pi-test.ts` | Isoliertes Entwicklungs-Pi und Smoke-Test |
+| `worker.ts` | Private JSON/JSONL process entry point |
+| `runner.ts` | Shell processes, dispatch, transitions, and events |
+| `pipeline-validation.ts` | Shared validation for Pi, worker preflight, and CI |
+| `pipeline-inputs.ts` | Load YAML, enforce path boundaries, and validate pipeline inputs |
+| `agent-runtime.ts` | Agent definitions, models, tools, handoffs, and result parsing |
+| `skills.ts` | Validate project-local skills and assemble agent instructions |
+| `human.ts` | Validate prompts and responses |
+| `step-outputs.ts` | Validate output declarations, path dependencies, and runtime types |
+| `journal.ts` | Persist and restore run and agent conversations, cursors, and checkpoints |
+| `run-storage.ts` | Scope recovery and input admission to the selected conversation tree |
+| `pi-extension.ts` | Pi commands, session mapping, UI, and tool integration |
+| `pi-session.ts` | Child process, event protocol, and process cleanup |
+| `pi-credentials.ts` | Provider credentials for the harness |
+| `init.ts` | Non-destructive project scaffolding |
+| `pi-test.ts` | Isolated Pi development environment and smoke test |
 
-## Ein Lauf vom Input zum Ergebnis
+## Run lifecycle
 
-1. Pipeline, Agents, ausgewählte Skills und Output-Referenzen werden geprüft,
-   bevor Journal oder Steps geöffnet werden.
-2. Der Runner wählt einen neuen oder fortzusetzenden Run. Der Storage-Scope wird
-   **vor** `Harness.open` gesetzt, damit Recovery keine fremden Tasks aktiviert.
-3. Inputs werden für neue Runs erfasst, für Resume aus dem Journal geladen.
-4. Der Dispatcher führt den aktuellen Step/Visit aus oder verwendet dessen
-   bereits gespeichertes erfolgreiches Ergebnis.
-5. Shell liefert Prozessresultate, Agent liefert Factory-Result-JSON, Human liefert
-   eine validierte Antwort. Output-Mappings werden an dieser Grenze geprüft.
-6. Der Abschluss inklusive Outputs wird gespeichert, bevor der Status den nächsten
-   Schritt auswählt. Cursor und Besuchszähler begrenzen Schleifen.
-7. `end` beendet den Lauf. Fehler stoppen ihn; das Harness wird geschlossen.
+1. Preflight checks the pipeline, agents, selected skills, and output references before opening the journal or executing steps.
+2. The runner selects a new or existing run. It sets the storage scope **before** `Harness.open` so recovery cannot activate unrelated tasks.
+3. New runs collect inputs. Resume loads inputs from the journal.
+4. The dispatcher executes the current step visit or reuses its saved successful result.
+5. Shell steps return process results, agents return Factory result JSON, and human steps return validated responses. Output mappings are checked at this boundary.
+6. The runner persists completion and outputs before routing by status. The cursor and visit counters track progress and bound loops.
+7. `end` completes the run. Execution errors stop it, and the runner closes the harness.
 
-## Persistenz und Isolation
+## Persistence and isolation
 
-| Identität | Zweck |
+| Identity | Purpose |
 | --- | --- |
-| `runId` | Unabhängiger Lauf mit eigenen Inputs und Ergebnissen |
-| Run-Conversation | Cursor, Step-Checkpoints und Laufzustand |
-| `(runId, agentName)` | Eigene Agent-Conversation mit Historie über wiederholte Besuche |
-| Handoff-Child | Delegierter Task unterhalb der jeweiligen Conversation |
-| Runde / Step / Visit | Unterscheidung von Refine-Runden und Schleifenbesuchen |
-| Request-ID | Wiederfinden bereits zugelassener Agent-Aufrufe |
+| `runId` | Independent run with its own inputs and results |
+| Run conversation | Cursor, step checkpoints, and run state |
+| `(runId, agentName)` | Agent history reused across visits within one run |
+| Handoff child | Delegated task under its owning conversation |
+| Round / step / visit | Distinguishes refine rounds and loop iterations |
+| Request ID | Recovers already admitted agent calls |
 
-Neue Runs bekommen frische Run- und Agent-Conversations. Derselbe Agent behält
-innerhalb eines Runs seine Historie; unterschiedliche Agents teilen keine
-Conversation. Strukturierte Ergebnisse/Feedback werden über Templates weitergereicht.
-**Das Dateisystem bleibt gemeinsam:** Conversation-Isolation ist keine Worktree-
-oder Prozess-Sandbox.
+Each new run starts fresh run and agent conversations. Repeated visits by the same agent reuse its history; different agents do not share a conversation. Structured results and feedback pass through templates. **The filesystem is shared:** conversation isolation is not worktree or process isolation.
 
-Die Zuordnungen werden atomar mit den Conversations gespeichert. Resume öffnet
-dieselben Datensätze; ein fehlender Datensatz ist ein Fehler, kein Anlass für eine
-neue Session. Legacy-Runs behalten ihre ursprüngliche Root-Conversation und
-bereits zugelassene Requests; keine automatische Migration oder Historienersetzung.
-Mehrdeutige unterbrochene Legacy-Runs auf derselben Root werden sicher abgelehnt.
+Mappings are saved atomically with their conversations. Resume opens those exact records and fails if one is missing rather than starting a replacement. Legacy runs keep their original root conversation and already admitted requests. Ambiguous interrupted legacy runs on the same root are rejected instead of recovering unrelated work.
 
-`run-storage.ts` begrenzt sowohl Wiederaufnahme lebender Tasks als auch Zulassung
-wartender Inputs auf Run, Agent-Conversations und transitive Handoff-Children.
-Nur nach Conversation zu filtern wäre unzureichend: der Harness-Scheduler arbeitet
-ansonsten auf dem gesamten gemeinsamen Storage.
+`run-storage.ts` restricts both live-task recovery and pending-input admission to the run conversation, its agents, and their transitive handoff children. Filtering only the visible conversation would not be enough because the harness scheduler otherwise operates over shared storage.
 
-## Resume, Refine und Replay
+## Resume, refine, and replay
 
-- **Neuer Pi-Run:** unabhängige Pi-Session plus frische Durable-Conversations.
-- **Resume:** offene Arbeit mit gespeicherten Inputs und denselben Conversations.
-  Erfolgreiche Checkpoints werden übersprungen; offene Requests wiedergefunden.
-- **Refine:** weitere Runde eines abgeschlossenen Runs mit Zusatzanweisung und
-  vorhandener Agent-Historie. Besuchslimits und Outputs gelten neu pro Runde.
-  Unterbrochene Runden erst per Resume abschließen.
+- **New Pi run:** Creates an independent Pi session and fresh durable conversations.
+- **Resume:** Continues unfinished work with its saved inputs and conversations. It skips successful checkpoints and recovers pending requests.
+- **Refine:** Opens a new round of a completed run with a follow-up instruction and existing agent history. Visit limits and outputs start fresh for the round. Resume an interrupted round before refining again.
 
-CLI `factory run <name>` kann den offenen CLI-Lauf wiederaufnehmen; die Pi-
-Integration unterscheidet die Modi explizit. `.factory/state/pi-runs.json`
-verknüpft Run-IDs mit Pi-Sessions und Workspace-Identitäten; die eigentlichen
-Checkpoints liegen im Durable-Journal. Git-Common-Dir und Worktree werden kanonisch
-identifiziert; explizit fremde Worktree-IDs werden in Pi abgelehnt. Alte Einträge
-ohne Identität bleiben mit expliziter ID nutzbar.
+`.factory/state/pi-runs.json` maps run IDs to Pi sessions and canonical workspace identities; the durable journal holds the execution checkpoints. Pi rejects IDs known to belong to a different worktree. Older entries without workspace identity remain available by explicit ID.
 
-### Keine Exactly-once-Garantie für externe Effekte
+### External effects are not exactly-once
 
-Zwischen externer Aktion (Datei schreiben, API-Aufruf, Push) und dauerhaftem
-Checkpoint kann der Prozess abstürzen. Ein Step kann dann erneut ausgeführt
-werden: **at-least-once**. Externe Aktionen brauchen Idempotenz oder eigene
-Deduplizierung. Gespeicherte Outputs sind Werte, keine Dateisnapshots. Ein
-persistierter Artefaktpfad garantiert nicht, dass die Datei noch existiert.
+A crash can occur after an external action (such as a file write, API call, or push) and before its checkpoint. The step may run again: **at-least-once**. Make those actions idempotent or deduplicate them separately. Saved outputs are values, not snapshots; a saved artifact path does not guarantee that the file still exists.
 
-## Pi-Prozessgrenze
+## Pi process boundary
 
-Die Extension startet CLI oder `FACTORY_BIN` ohne Shell-Interpolation von
-Benutzereingaben. Ein JSON-Request geht über stdin, JSONL-Events über stdout;
-Logs laufen im Session-Modus über stderr. Events melden Fortschritt und wartende
-Human-Eingaben. Antworten sind an den aktuellen Checkpoint gebunden.
+The extension starts the internal Bun worker without interpolating user inputs into a shell command. It sends a JSON request over stdin and receives JSONL events over stdout. Logs go to stderr in session mode. Human responses are bound to the current checkpoint.
 
-Ein echter Pi-Agent-Turn ruft das registrierte `factory_run`-Tool auf; Run-,
-Request- und native Session-Zuordnung werden geprüft. Dadurch sehen Monitore
-aktive Tool-Arbeit und die Timeline bleibt nach Wiederöffnen erhalten. Der
-Kickoff benötigt das in Pi gewählte Modell, auch wenn die Pipeline nur Shell nutzt.
+A real Pi agent turn invokes the registered `factory_run` tool, which checks the run, request, and native session binding. Session monitors can see active tool work, and reopening the session preserves the timeline. The Pi kickoff needs the selected model even for a shell-only pipeline.
 
-Während eines aktiven Laufs ist Sessionwechsel gesperrt. Abbruch/Shutdown beendet
-unter POSIX die Prozessgruppe zuerst mit SIGTERM und nach 300 ms mit SIGKILL,
-auch bei Fehlern in der Event-Verarbeitung. Der offene Request bleibt für Resume.
-Nicht mehrere Factory-Pi-Prozesse gleichzeitig im selben Repository betreiben.
+Session switching is blocked during active work. On POSIX, cancellation, shutdown, and event-processing errors terminate the process group with SIGTERM, then SIGKILL after 300 ms. The pending request remains available for resume. Do not run multiple Factory-enabled Pi processes in the same repository at once.
 
-## Vertrauen und Grenzen
+## Trust and limits
 
-YAML, Agent-Markdown und Skills sind vertrauenswürdige Projektkonfiguration.
-Shell läuft mit der Benutzerumgebung; Agent-Tools dürfen Dateien verändern und
-Kommandos ausführen. Skill-Pfadvalidierung und Tool-Listen schaffen keine Sandbox.
-Credentials liegen standardmäßig in `~/.pi/agent/auth.json`; der Durable-Runner
-kann sie aktualisieren. Outputs werden explizit ausgewählt, müssen aber trotzdem
-auf Secrets geprüft werden.
+Pipeline YAML, agent Markdown, and skills are trusted project configuration. Shell steps run with the user's environment, and agent tools can modify files and execute commands. Path checks and tool allowlists are not a sandbox. The durable runner can update provider credentials in `~/.pi/agent/auth.json`. Review selected outputs before persisting them.
 
-Aktuell: sequenzielle Steps, keine automatische Trigger-Ausführung und keine
-allgemeine Exactly-once-Garantie. Das repositoryeigene Publishing ist ein expliziter
-Shell-Schritt nach Human-Freigabe, kein implizites Feature jedes Runs.
+Steps are sequential and have no automatic triggers. This repository's publishing step is an explicit shell step after human approval, not an implicit feature of every run.
 
-## Verifikation
+## Verification
 
-`bun run check` bündelt Format, Lint, Bun-Tests, TypeScript und Validierung der
-Repository-Pipeline. Lokale Tests verwenden deterministische Fixtures und
-Test-Provider statt bezahlter Modellaufrufe. Der Pi-Smoke-Test prüft Extension-
-Registrierung ohne Credentials oder Prompt. Das beweist keine Live-Provider-
-Verfügbarkeit; diese bleibt eine separate Betriebsprüfung.
-
-{% endraw %}
+`bun run check` runs format, lint, Bun tests, TypeScript checks, and repository pipeline validation. Tests use deterministic fixtures and test providers. The Pi smoke test checks extension registration without credentials or model calls; it does not verify live provider availability.

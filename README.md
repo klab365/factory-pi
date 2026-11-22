@@ -1,106 +1,73 @@
-# Pi Software Factory
+# Factory for Pi
 
-**Vom Ziel zur geprüften Änderung — mit wiederaufnehmbaren Agent-Pipelines.**
+**A Pi extension for resumable software workflows.**
 
-Factory verbindet Shell-Kommandos, spezialisierte Pi-Agents und menschliche
-Freigaben in projektlokalen YAML-Pipelines. Ergebnisse und Fortschritt bleiben
-im Durable-Journal erhalten; unterbrochene Arbeit lässt sich fortsetzen.
+Factory adds `/factory` to Pi. Define shell commands, agent tasks, and human checkpoints in project-local YAML. Pi Durable records progress and agent history so you can pick up interrupted work and refine completed runs.
 
-- **Projektlokal:** Pipelines, Agents und Skills werden mit deinem Code versioniert.
-- **Kontrolliert:** explizite Statusübergänge, begrenzte Review-Schleifen und Human-Checkpoints.
-- **Nachvollziehbar:** getrennte Agent-Historien und persistierte Step-Ergebnisse.
-- **Flexibel:** Standalone-CLI oder interaktiv in Pi. Noch ein Prototyp, kein Sandbox-System.
+- Version pipelines, agents, and skills alongside your code.
+- Route steps by status, bound review loops, and pause for human approval.
+- Resume from saved checkpoints instead of repeating completed work.
 
-## In zwei Minuten starten
+## Get started in Pi
 
-Für einen lokalen Checkout benötigst du [Bun](https://bun.sh) (≥ 1.3) und `bash`.
-Die getestete Toolchain lässt sich alternativ mit `mise install` einrichten.
+Install the extension once the npm package is published:
 
 ```sh
-git clone https://github.com/klab365/factory-pi.git
-cd factory-pi
-bun install --frozen-lockfile
-bun link
-cd /pfad/zu/deinem/projekt
-factory init
-factory run hello
+pi install npm:pi-software-factory
 ```
 
-`hello` ist eine Shell-Pipeline und braucht keine Credentials. `init` überschreibt
-keine vorhandenen Dateien. Für Modellaufrufe konfigurierst du den Provider in
-Pis `auth.json` (üblicherweise `~/.pi/agent/auth.json`).
+Or load it from a local Factory checkout. Install dependencies there with `bun install --frozen-lockfile`, then start Pi from your target project:
 
-Ohne Bun auf dem Zielsystem? Die [Installationsanleitung](docs/guide.md#installation-und-verwendung-in-anderen-repositories)
-beschreibt Standalone-Binaries für Linux/macOS und npm/Pi-Installation.
+```sh
+pi -e /path/to/factory-pi/src/pi-extension.ts
+```
 
-## Eine Pipeline
-
-`.factory/pipelines/check.yml`:
+In Pi, run `/factory init` to create a starter project configuration. To try a pipeline with an approval step, save this as `.factory/pipelines/check.yml` in the target project:
 
 ```yaml
-name: Projekt prüfen
+name: Check the project
 steps:
   - id: test
     shell: bun test
   - id: accept
     human:
-      prompt: Ergebnis freigeben?
+      prompt: Approve the result?
       choices: [approved, rejected]
     transitions:
       approved: end
       rejected: end
 ```
 
-```sh
-factory validate check
-factory run check
-```
-
-Agents ergänzen Schritte um `agent: builder` und `task: ...`;
-ihre Instruktionen stehen in `.factory/agents/builder.md`.
-Die [Syntaxreferenz](docs/syntax.md) zeigt vollständige Beispiele.
-
-## In Pi arbeiten
-
-Nach Installation der Extension (`pi install npm:pi-software-factory`, sobald
-veröffentlicht) im Zielprojekt:
+In Pi, select a model and run:
 
 ```text
-/factory run
-/factory resume
-/factory refine
+/factory validate check
+/factory run check
 ```
 
-`run` startet unabhängig, `resume` setzt unterbrochene Arbeit fort, `refine`
-öffnet eine weitere Runde eines abgeschlossenen Laufs. Details und lokale
-Extension-Entwicklung stehen im [Betriebshandbuch](docs/guide.md#factory-in-pi).
+Use `/factory resume` to continue an interrupted run or `/factory refine` to start a follow-up round of a completed one. Pi needs a configured model to start the run, even when the pipeline only contains shell and human steps. Factory's built-in `agent:` steps also use Pi Durable; see the [syntax reference](docs/syntax.md) for a complete agent example.
 
-## Dokumentation
+## Documentation
 
-| Einstieg | Inhalt |
+| Page | What it covers |
 | --- | --- |
-| [Syntax](docs/syntax.md) | Pipelines, Agents, Skills, Templates und Outputs |
-| [Architektur](docs/architecture.md) | Ausführung, Zustandsmodell, Replay und Modulgrenzen |
-| [Betrieb und Integration](docs/guide.md) | Installation, Pi, Credentials, Releases und Publishing |
-| [Dokumentationswebsite](docs/deployment.md) | GitHub Pages einrichten und lokal prüfen |
+| [User guide](docs/guide.md) | Pi setup, `/factory` commands, and credentials |
+| [Syntax reference](docs/syntax.md) | Pipelines, agents, skills, templates, and outputs |
+| [Architecture](docs/architecture.md) | The extension, runner process, state isolation, and replay |
 
-## Entwicklung
+## Development
 
 ```sh
-bun install --frozen-lockfile
-bun run check   # Format, Lint, Tests, TypeScript, Pipeline-Validierung
-bun run build   # dist/factory für die aktuelle Plattform
+mise install
+mise run dev-pi            # Launch Pi with the local extension
+mise run dev-pi -- --smoke # Check extension registration without a model
+mise run check             # Format, lint, tests, TypeScript, and pipeline validation
 ```
 
-Die mitgelieferte `software-factory`-Pipeline implementiert Ziele, lässt sie
-reviewen und fragt vor dem Commit/Push nach menschlicher Freigabe.
-**Nur in einem separaten Branch mit sauberem Worktree verwenden:** Der
-Publishing-Schritt committet alle Änderungen und benötigt Git, Python und `gh`.
+Start the documentation site with `mise run docs:dev` and open <http://localhost:4321/factory-pi/>. Use `mise run docs:build` for a static build or `mise run docs:preview` to preview it locally.
 
-## Sicherheits- und Betriebsgrenzen
+The bundled `software-factory` pipeline implements and reviews a change, then asks for approval before committing and pushing. **Run it only on a separate branch with a clean worktree:** publishing commits all worktree changes and requires Git, Python, and `gh`.
 
-Pipelines und Agent-Instruktionen sind vertrauenswürdiger ausführbarer Projektcode.
-Keine Sandbox, keine parallele Ausführung, keine automatischen Trigger.
-Shell-Seiteneffekte können nach Abbruch wiederholt werden (**at-least-once**):
-Kommandos idempotent gestalten. `.factory/state/` ist lokaler Laufzustand,
-kein Quellcode; ausgewählte Outputs dürfen keine Secrets enthalten.
+## Operational limits
+
+Factory is a prototype, not a sandbox. Treat pipeline YAML and agent instructions as trusted executable project code. Steps run sequentially; there are no automatic triggers. Shell side effects may be repeated after interruptions, so make commands idempotent. Do not commit `.factory/state/` or persist secrets as outputs.

@@ -1,53 +1,46 @@
 ---
-layout: default
-title: Syntaxreferenz
+title: Syntax reference
+description: YAML pipelines, Markdown agents, skills, templates, and typed outputs.
 ---
-{% raw %}
 
+This reference describes the current runner syntax. Paths are relative to the target project. `/factory validate <name>` checks a pipeline without calling a model. The runner also performs preflight checks before each run.
 
-# Syntax: Pipelines, Agents und Skills
-
-Diese Referenz beschreibt die aktuelle Runner-Syntax, kein geplantes Schema.
-Alle Pfade beziehen sich auf das aktuelle Zielprojekt. `factory validate <name>`
-prüft eine Pipeline ohne Modellaufruf; vor jedem Lauf erfolgt ebenfalls ein Preflight.
-
-## Dateistruktur
+## File layout
 
 ```text
 .factory/
   pipelines/feature.yml
   agents/builder.md
-  state/                   # lokal, nicht versionieren
+  state/                   # Local; do not commit
 .agents/
   skills/typescript-expert/SKILL.md
 ```
 
-Der Dateiname ist der CLI-Schlüssel: `factory run feature`. Pipelines verwenden
-`.yml`, Agents `.md`. Keine entfernten Konfigurationsquellen erforderlich.
+Use the filename without its extension in Pi commands: `/factory run feature`. Pipeline files use `.yml`; agent definitions use `.md`.
 
-## Vollständiges Agent-Beispiel
+## Complete agent example
 
 `.factory/pipelines/feature.yml`:
 
 ```yaml
-name: Änderung mit Abnahme
+name: Implement a change with approval
 inputs:
   goal:
-    description: Was soll umgesetzt werden?
+    description: What should change?
     required: true
 steps:
   - id: implement
     agent: builder
     maxVisits: 3
     task: |-
-      Implementiere: ${{ inputs.goal }}
-      Bisheriges Feedback: ${{ steps.accept.response }}
+      Implement: ${{ inputs.goal }}
+      Previous feedback: ${{ steps.accept.response }}
     transitions:
       completed: accept
   - id: accept
     maxVisits: 3
     human:
-      prompt: Änderung freigeben?
+      prompt: Approve the change?
       choices: [approved, changes_requested, rejected]
     transitions:
       approved: end
@@ -60,59 +53,49 @@ steps:
 ```markdown
 ---
 name: builder
-description: Implementiert Änderungen mit Tests
+description: Implements changes and adds tests
 model: openai-codex/gpt-6.1-sol
 thinking: medium
 tools: [read, bash, edit, write]
 ---
-Lies zunächst die Projektanweisungen. Implementiere die Aufgabe und prüfe sie.
-Berichte nur tatsächlich ausgeführte Checks.
+Read the project instructions first. Implement and verify the change.
+Report only the checks you actually ran.
 ```
 
-Das Modell ist ein Beispiel aus der Repository-Konfiguration; verwende eine für
-deinen Provider verfügbare Modell-ID und passende Credentials.
+The model ID is an example. Use a model available from your configured provider.
 
-```sh
-factory validate feature
-factory run feature --goal="Ergänze Tests für den Parser"
+```text
+/factory validate feature
+/factory run feature
 ```
 
-## Pipeline-Felder
+Enter the goal in Pi when prompted.
 
-| Feld | Bedeutung |
+## Pipeline fields
+
+| Field | Meaning |
 | --- | --- |
-| `name` | Lesbarer Name; CLI-Auswahl erfolgt über den Dateinamen |
-| `inputs` | Map aus Input-Namen und Definitionen |
-| `steps` | Nicht leere Liste; Start beim ersten Schritt |
+| `name` | Display name; Pi selects by filename |
+| `inputs` | Map of input names to definitions |
+| `steps` | Non-empty list; execution starts at the first step |
 
-Inputs unterstützen `description`, `required` (Standard: `true`), `default` und
-`options` (Liste zulässiger Werte). Laufzeitwerte sind Strings. Nicht gesetzte
-optionale Inputs ohne Default werden ausgelassen. Übergabe mit `--name=value`
-oder `--name value`; fehlende Pflichtwerte werden am Terminal abgefragt,
-ohne Terminal abgelehnt. Beispiel:
+Inputs support `description`, `required` (default: `true`), `default`, and `options` (allowed values). Runtime values are strings. An optional input with no value or default is omitted. Pi prompts for inputs and rejects missing required values.
 
 ```yaml
 inputs:
   mode:
-    description: Prüfumfang
+    description: Scope of checks
     default: quick
     options: [quick, full]
   note:
     required: false
 ```
 
-Jeder Schritt benötigt eine eindeutige `id` und **genau eines** von `shell`,
-`agent`, `human`. Optional: `name`, `outputs`, `transitions`, `maxVisits`.
-`agent` benötigt zusätzlich `task`. `maxVisits` ist eine positive Ganzzahl,
-standardmäßig **1**, und begrenzt Besuche je Runde.
+Each step needs a unique `id` and **exactly one** of `shell`, `agent`, or `human`. Optional fields are `name`, `outputs`, `transitions`, and `maxVisits`. Agent steps also require `task`. `maxVisits` is a positive integer, defaults to **1**, and limits visits per round.
 
-Ohne `transitions` folgt der nächste Listeneintrag, beim letzten endet der Lauf.
-Mit `transitions` muss der Ergebnisstatus einen Eintrag haben; ein fehlender
-Eintrag ist ein Fehler. Ziel ist eine Step-ID oder das reservierte `end`.
-Fehlgeschlagene Ausführung stoppt den Lauf, sie ist kein automatischer Fehlerzweig.
-`run:` und `captureOutput:` sind entfernt und werden abgelehnt.
+Without `transitions`, execution advances to the next listed step or ends after the last. With `transitions`, the result status must have an entry pointing to a step ID or the reserved `end`. A missing entry or execution failure stops the run; there is no implicit error branch. The old `run:` and `captureOutput:` fields are rejected.
 
-## Shell
+## Shell steps
 
 ```yaml
 steps:
@@ -126,59 +109,38 @@ steps:
       outputs: {stdout: true, stderr: false}
 ```
 
-Alternativ `shell: bun test`. Ausführung mit `bash -lc`, standardmäßig im
-Projekt-Root. `workingDirectory` wird relativ dazu aufgelöst; es ist keine
-Sandbox-Grenze. `env` ergänzt/überschreibt die Prozessumgebung (Werte als Strings
-angeben). `timeout` ist in Millisekunden und beendet auch Nachfahren.
+Use `shell: bun test` for a simple command. Commands run via `bash -lc` in the project root by default. `workingDirectory` is relative to that root and is not a sandbox boundary. `env` extends or overrides the process environment; supply strings as values. `timeout` is in milliseconds and terminates descendant processes too.
 
-Erfolgreiche Kommandos liefern `status: completed` und `exitCode: 0`.
-Nicht-null Exit-Code, Timeout oder Output-Overflow stoppen die Ausführung.
-Streams werden angezeigt, aber nur explizit ausgewählte Streams als getrimmte
-`stdout`/`stderr` persistiert. Limit: zusammen 64 KiB UTF-8 für ausgewählte Streams.
+A successful command returns `status: completed` and `exitCode: 0`. A nonzero exit, timeout, or output overflow stops execution. Streams are displayed, but only explicitly selected streams are persisted as trimmed `stdout` or `stderr`. Selected streams share a 64 KiB UTF-8 limit.
 
-## Human-Checkpoints
+## Human checkpoints
 
 ```yaml
 steps:
   - id: approval
     human:
-      prompt: Freigeben?
+      prompt: Approve the result?
       choices: [approved, rejected]
     transitions:
       approved: end
       rejected: end
 ```
 
-Mit `choices` wird die Auswahl zum `status`; ohne `choices` wird Freitext erfasst
-und der Status ist `completed`. `response` und `summary` enthalten die Antwort.
-CLI fragt am Terminal; Pi öffnet Auswahl oder Editor. Abbrechen lässt den
-Checkpoint offen. Nicht-interaktiv wird ohne Antwort nicht fortgefahren:
+With `choices`, the selected value becomes the `status`. Without choices, Factory collects free text and returns `completed`. The `response` and `summary` contain the answer. Pi opens a selector or editor. Cancellation leaves the checkpoint pending. Use `/factory resume` to return to it. Factory persists accepted responses before downstream actions and reuses them during replay.
 
-```sh
-factory run feature --human-response=approved
-```
+## Templates and outputs
 
-Das setzt den offenen CLI-Lauf mit einer Antwort fort (höchstens eine wartende
-Antwort pro Aufruf). In Pi `/factory resume` verwenden. Akzeptierte Antworten
-werden vor Folgeaktionen gespeichert und bei Replay wiederverwendet.
+- `${{ inputs.goal }}`: Run input.
+- `${{ steps.build.stdout }}`: Raw result field.
+- `${{ steps.build.outputs.report }}`: Declared, typed output.
 
-## Templates und Outputs
-
-- `${{ inputs.goal }}`: Laufinput.
-- `${{ steps.build.stdout }}`: direktes Ergebnisfeld.
-- `${{ steps.build.outputs.report }}`: explizit deklariertes, typisiertes Output.
-
-Templates funktionieren in `task`, Human-Prompts und Shell-Kommandos. In Shell-
-Kommandos werden eingesetzte Werte gequotet; Werte werden nicht erneut als
-Template ausgewertet. Sie sind Daten, keine nachzuladenden Shell-Fragmente.
-Direkte Ergebnisreferenzen können in Feedback-Schleifen noch leer sein.
-Typisierte Outputs haben dagegen statisch geprüfte Produzentenabhängigkeiten.
+Templates work in `task`, human prompts, and shell commands. Shell substitutions are quoted and inserted values are not re-evaluated as templates. Treat these values as data, not executable shell fragments. Direct result references may be empty on the first pass through a feedback loop. Typed outputs have statically checked producer dependencies.
 
 ```yaml
 steps:
   - id: build
     shell:
-      command: 'printf "dist/report.json"'
+      command: 'mkdir -p dist && printf "{}\n" > dist/report.json && printf "dist/report.json"'
       outputs: {stdout: true}
     outputs:
       report: {type: artifact, from: result.stdout}
@@ -187,67 +149,43 @@ steps:
     shell: 'cat ${{ steps.build.outputs.report }}'
 ```
 
-Der Produzent muss die referenzierte Datei selbst erstellen; das Beispiel zeigt
-nur die Pfadübergabe. `outputs.<name>` benötigt `type` (`string`, `number`,
-`boolean`, `artifact`) und `from: result.<field>`. Verschachtelte Agent-Felder
-sind möglich. Keine Typumwandlung: fehlende oder falsche Werte lassen den Schritt
-scheitern. Benannte Output-Produzenten müssen auf jedem Pfad zum Konsumenten
-abgeschlossen sein; Vorwärts-/Selbstreferenzen und bedingtes Umgehen sind ungültig.
+`outputs.<name>` needs a `type` (`string`, `number`, `boolean`, or `artifact`) and a `from: result.<field>` reference. Nested agent result fields are supported. Missing or mismatched values fail the step; Factory does not coerce types. Every path to a consumer must pass through its named output producer. Forward references, self-references, and branches that skip the producer are invalid.
 
-`artifact` ist ein nicht leerer relativer Pfad ohne `..`, kein Upload oder Snapshot.
-Dateien selbst aufbewahren. Jedes JSON-kodierte Output hat ein 64-KiB-Limit.
-Outputs werden mit dem Abschluss gespeichert und bei Resume nicht neu berechnet;
-Refine erzeugt sie für die neue Runde erneut. **Keine Secrets auswählen.**
+An `artifact` is a non-empty relative path without `..`, not an upload or snapshot. The producer must create the file, and callers must retain it. Each JSON-encoded output has a 64 KiB limit. Outputs are saved with step completion and reused on resume; refine regenerates them in the new round. **Do not select secrets.**
 
-## Agent-Frontmatter und Ergebnisprotokoll
+## Agent frontmatter and result protocol
 
-| Feld | Vertrag |
+| Field | Contract |
 | --- | --- |
-| `name` | Erforderlich, muss dem Dateinamen ohne `.md` entsprechen |
-| `description` | Optionale Beschreibung |
-| `model` | Optional, `provider/model-id` |
+| `name` | Required; must match the filename without `.md` |
+| `description` | Optional description |
+| `model` | Optional `provider/model-id` |
 | `thinking` | Optional: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` |
-| `tools` | Optionale Liste der Tool-Namen; z. B. `read`, `bash`, `edit`, `write` |
-| `skills` | Optionale Liste projektlokaler Skill-Namen |
+| `tools` | Optional list of tool names, e.g. `read`, `bash`, `edit`, `write` |
+| `skills` | Optional list of project-local skill names |
 
-Ohne Tool-Liste stehen die registrierten Tools zur Verfügung; eine Liste filtert
-Coding-Tools. Erlaubte Handoff-Tools werden zusätzlich aus Übergängen abgeleitet.
-Ein leeres `tools: []` ist keine Sandbox. Nach dem Frontmatter folgen Markdown-
-Instruktionen; der Runner ergänzt Skills und das Ergebnisprotokoll.
+Omitting `tools` leaves registered tools available; a list filters coding tools. Allowed handoff tools also derive from transitions. `tools: []` is not a sandbox. Markdown instructions follow the frontmatter; the runner appends selected skills and the result protocol.
 
-Jeder Agent-Turn endet mit einem strukturierten Block:
+Each agent turn ends with a structured block:
 
 ```text
-<factory-result>{"status":"completed","summary":"Änderung umgesetzt","feedback":""}</factory-result>
+<factory-result>{"status":"completed","summary":"Implemented the change","feedback":""}</factory-result>
 ```
 
-Statuswerte stammen aus den Step-Transitions (ohne Transitions: `completed`).
-Zusätzliche JSON-Felder können von späteren Tasks oder Output-Mappings genutzt
-werden. Statusübergänge routen den nächsten Pipeline-Schritt; direkte Handoffs
-sind separate Child-Tasks und kein Ersatz für diese Ablaufsteuerung.
+Allowed statuses come from the step's transitions, or `completed` if there are none. Later tasks and output mappings can reference additional JSON fields. Transitions select the next pipeline step. Direct handoffs run separate child tasks and do not replace pipeline routing.
 
 ## Skills
 
-Optional im Agent-Frontmatter: `skills: [typescript-expert]`.
-Auflösung ausschließlich als `.agents/skills/<name>/SKILL.md`:
+Select skills explicitly with `skills: [typescript-expert]` in agent frontmatter. Factory resolves them only as `.agents/skills/<name>/SKILL.md`:
 
 ```markdown
 ---
 name: typescript-expert
-description: Sichere TypeScript-Änderungen
+description: Safe TypeScript changes
 ---
-Validiere externe Eingaben. Ergänze deterministische Tests.
+Validate external inputs and add deterministic tests.
 ```
 
-Namen: kleingeschriebene ASCII-Buchstaben/Ziffern, einzelne Bindestriche zwischen
-Segmenten, maximal 64 Zeichen. Keine Duplikate, Pfade, URLs oder globalen Fallbacks.
-Frontmatter-Name muss zum Verzeichnis passen; Beschreibung und Anweisungstext
-müssen nicht leer sein. Symlinks dürfen nicht aus dem Projekt führen.
+Names use lowercase ASCII letters and digits with single hyphens between segments and can be at most 64 characters. Duplicate references, paths, URLs, and global fallbacks are not supported. The frontmatter name must match the directory; the description and instructions cannot be empty. Symlinks cannot point outside the project.
 
-Fehlendes `skills` oder `[]` lädt nichts; `null` ist ungültig. Preflight prüft alle
-referenzierten Skills, auch beim Resume. Anweisungen werden in Listenreihenfolge
-angehängt, nicht referenzierte Dateien nicht geladen. Skills erteilen keine Tools
-oder Handoff-Rechte. Bereits zugelassene Requests werden beim Replay nicht neu
-konfiguriert; neue Requests verwenden die aktuellen Definitionen.
-
-{% endraw %}
+Omitting `skills` or passing `[]` loads nothing; `null` is invalid. Preflight checks referenced skills, even on resume. The runner appends instructions in list order and ignores unreferenced files. Skills cannot grant tools or handoff permissions. Replay preserves the configuration of already admitted requests; new requests use the current definitions.

@@ -62,7 +62,7 @@ test("selects only eligible runs and preserves runId to Pi session mappings", as
     rmSync(root, { recursive: true, force: true });
   }
 });
-test("child protocol reuses CLI: new runs independent, resume skips work, refine adds a durable round", async () => {
+test("worker protocol: new runs independent, resume skips work, refine adds a durable round", async () => {
   const root = mkdtempSync(resolve(tmpdir(), "factory-pi-child-"));
   mkdirSync(resolve(root, ".factory/pipelines"), { recursive: true });
   writeFileSync(

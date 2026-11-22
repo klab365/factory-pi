@@ -1,36 +1,16 @@
 ---
-layout: default
-title: Start
+title: Factory for Pi
+description: Run and resume project-local workflows from the Pi coding agent.
 ---
-{% raw %}
 
+Factory is a Pi extension that runs shell commands, agent tasks, and human checkpoints as resumable YAML pipelines. Configuration stays in your project, and Pi Durable records results and agent histories in a local journal.
 
-# Vom Ziel zur geprüften Änderung
+## Quick start
 
-Pi Software Factory führt Shell-Kommandos, spezialisierte Agents und menschliche
-Freigaben als wiederaufnehmbare YAML-Pipelines aus. Die Konfiguration bleibt im
-Projekt; Ergebnisse und Agent-Historien liegen im lokalen Durable-Journal.
+1. [Install or load the extension](guide.md#factory-in-pi).
+2. [Define a pipeline in your project](syntax.md).
+3. Open Pi in the project and run `/factory run` to select the pipeline. Use `/factory resume` to continue interrupted work or `/factory refine` for a follow-up round.
 
-## Loslegen
+Pi needs a configured model for the kickoff, even if the selected pipeline only runs shell commands. For the execution and replay details, see [Architecture](architecture.md).
 
-Mit Bun und einem lokalen Checkout:
-
-```sh
-bun install --frozen-lockfile
-bun link
-cd /pfad/zu/deinem/projekt
-factory init
-factory run hello
-```
-
-Der Starter benötigt kein Modell. Für Agent-Schritte werden Pi-Provider-Credentials benötigt.
-
-1. [Installation und Pi-Integration](guide.md) einrichten.
-2. [Pipeline und Agent definieren](syntax.md).
-3. [Ausführung und Replay verstehen](architecture.md).
-
-**Vertrauensgrenze:** Factory ist keine Sandbox. Shell-Kommandos und Agent-Tools
-arbeiten im Projekt. Seiteneffekte müssen wiederholbar sein; keine Secrets als
-Outputs persistieren. Aktuell keine parallelen Schritte oder automatischen Trigger.
-
-{% endraw %}
+Factory is not a sandbox. Only run trusted pipelines, make side effects idempotent, and do not persist secrets as outputs.

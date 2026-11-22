@@ -50,13 +50,24 @@ export type PromptUI = {
   input(title: string, placeholder?: string): Promise<string | undefined>;
   select(title: string, options: string[]): Promise<string | undefined>;
 };
-export function parseCommand(args: string): { command: string; target?: string } {
+type FactoryCommand = "init" | "validate" | "run" | "resume" | "refine";
+
+export function parseCommand(args: string): { command: FactoryCommand; target?: string } {
   const parts = args.trim().split(/\s+/).filter(Boolean);
   const command = parts.shift() ?? "run";
-  if (!["run", "resume", "refine"].includes(command) || parts.length > 1) {
-    throw new Error("Usage: /factory run [pipeline] | resume [runId] | refine [runId]");
+  const usage =
+    "Usage: /factory init | validate [pipeline] | run [pipeline] | resume [runId] | refine [runId]";
+  switch (command) {
+    case "init":
+      if (parts.length === 0) return { command };
+      break;
+    case "validate":
+    case "run":
+    case "resume":
+    case "refine":
+      if (parts.length <= 1) return { command, target: parts[0] };
   }
-  return { command, target: parts[0] };
+  throw new Error(usage);
 }
 export async function promptInputs(
   pipeline: RecordValue,
@@ -76,7 +87,7 @@ export async function promptInputs(
     if (value === undefined) return undefined;
     supplied.push(`--${name}=${value || initial}`);
   }
-  // Validate with exactly the same rules as the CLI, without falling back to terminal prompts.
+  // Validate with the same input rules as the worker.
   for (const [name, raw] of Object.entries(definitions)) {
     if (
       object(raw, name).required !== false &&
@@ -146,21 +157,15 @@ export async function runChild(
   } = {},
 ): Promise<void> {
   signal?.throwIfAborted();
-  const cli = fileURLToPath(new URL("./cli.ts", import.meta.url));
-  // An explicitly installed standalone runtime does not require Bun on PATH.
-  const binary = process.env.FACTORY_BIN;
-  const child = spawn(
-    options.command ?? binary ?? "bun",
-    options.args ?? (binary ? ["session"] : ["run", cli, "session"]),
-    {
-      cwd: root,
-      stdio: ["pipe", "pipe", "pipe"],
-      // A dedicated POSIX process group allows runner-wide cleanup; the CLI relays signals to
-      // detached shell groups and cleans up their descendants before this group is escalated.
-      // Do not pass signal to spawn: its immediate-child abort can settle before cleanup.
-      detached: process.platform !== "win32",
-    },
-  );
+  const worker = fileURLToPath(new URL("./worker.ts", import.meta.url));
+  const child = spawn(options.command ?? "bun", options.args ?? ["run", worker], {
+    cwd: root,
+    stdio: ["pipe", "pipe", "pipe"],
+    // A dedicated POSIX process group allows runner-wide cleanup; the worker relays signals to
+    // detached shell groups and cleans up their descendants before this group is escalated.
+    // Do not pass signal to spawn: its immediate-child abort can settle before cleanup.
+    detached: process.platform !== "win32",
+  });
   let stopping: Promise<void> | undefined;
   let failure: unknown;
   let completed = false;
@@ -183,7 +188,7 @@ export async function runChild(
     kill("SIGTERM");
     stopping = new Promise<void>((done) => {
       setTimeout(() => {
-        // The CLI uses a separate process group for shell descendants and needs time to clean it up.
+        // The worker uses a separate process group for shell descendants and needs time to clean it up.
         // Still escalate if the leader exited: descendants may ignore TERM and close inherited pipes.
         kill("SIGKILL");
         done();

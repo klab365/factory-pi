@@ -1,7 +1,0 @@
-title: Pi Software Factory
-description: Projektlokale, wiederaufnehmbare Agent-Pipelines
-url: https://klab365.github.io
-baseurl: /factory-pi
-markdown: kramdown
-exclude:
-  - deployment.md

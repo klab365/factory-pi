@@ -5,3 +5,4 @@ dist/
 
 # Generated documentation site
 _site/
+.astro/

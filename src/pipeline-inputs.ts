@@ -19,7 +19,7 @@ export function loadYaml(path: string): RecordValue {
   if (!existsSync(path)) fail(`File not found: ${relative(root, path)}`);
   return object(parse(readFileSync(path, "utf8")), relative(root, path));
 }
-export function factoryFile(folder: string, name: string, extension: string): string {
+export function factoryFile(folder: string, name: string, extension: string, root = process.cwd()): string {
   const path = resolve(root, ".factory", folder, `${name}.${extension}`);
   const fromFactory = relative(resolve(root, ".factory", folder), path);
   if (isAbsolute(fromFactory) || fromFactory === ".." || fromFactory.startsWith(`..${sep}`)) {

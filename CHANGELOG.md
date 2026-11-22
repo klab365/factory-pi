@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.1](https://github.com/klab365/factory-pi/compare/pi-software-factory-v0.4.0...pi-software-factory-v0.4.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* **deps:** align pi-ai dev version with durable ([5d6eabc](https://github.com/klab365/factory-pi/commit/5d6eabc9b5d06288883daa403ffdd5f94b823c0f))
+* **package:** declare Pi host modules as peers ([d17593a](https://github.com/klab365/factory-pi/commit/d17593ae12d7a9663f65c81aa320e7074f22f472))
+* **package:** declare Pi host modules as peers ([b68ae5c](https://github.com/klab365/factory-pi/commit/b68ae5c8075fef486eac7f306c1972462de35be7))
+* **runner:** allow unlimited agent visits by default ([cd332c6](https://github.com/klab365/factory-pi/commit/cd332c6ce2380d90b5b61f4c27d45b519dfe6abc))
+* **runner:** allow unlimited agent visits by default ([3546aff](https://github.com/klab365/factory-pi/commit/3546afffc8cb4a01edfc199956f84fa3464b4ec9))
+
 ## [0.4.0](https://github.com/klab365/factory-pi/compare/pi-software-factory-v0.3.0...pi-software-factory-v0.4.0) (2026-11-22)
 
 

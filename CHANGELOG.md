@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/klab365/factory-pi/compare/pi-software-factory-v0.3.0...pi-software-factory-v0.4.0) (2026-11-22)
+
+
+### Features
+
+* choose project-specific agents during init ([c7e2e96](https://github.com/klab365/factory-pi/commit/c7e2e9677476c79686a2592ad604cf66bc4db1ff))
+
 ## [0.3.0](https://github.com/klab365/factory-pi/compare/pi-software-factory-v0.2.0...pi-software-factory-v0.3.0) (2026-11-22)
 
 

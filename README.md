@@ -1,22 +1,19 @@
 # Factory for Pi
 
-**A Pi extension for resumable software workflows.**
+**Resumable software workflows inside the Pi coding agent.**
 
-Factory adds `/factory` to Pi. Define shell commands, agent tasks, and human checkpoints in project-local YAML. Pi Durable records progress and agent history so you can pick up interrupted work and refine completed runs.
+Define shell commands, agent tasks, and human checkpoints in project-local YAML. Factory records progress and agent history so you can resume interrupted work or refine completed runs.
 
-- Version pipelines, agents, and skills alongside your code.
-- Route steps by status, bound review loops, and pause for human approval.
-- Resume from saved checkpoints instead of repeating completed work.
+## Get started
 
-## Get started in Pi
-
-Install the extension once the npm package is published:
+With [Pi](https://github.com/earendil-works/pi) and [Bun](https://bun.sh/) installed:
 
 ```sh
 pi install npm:pi-software-factory
+pi
 ```
 
-Or load it from a local Factory checkout. Install dependencies there with `bun install --frozen-lockfile`, then start Pi from your target project:
+Select a configured model in Pi, then run `/factory init` in your project. Pi inspects the project and decides which agents its workflow needs; no `builder` agent is assumed. Review the generated workflow, then use `/factory validate` and `/factory run` to select it.
 
 ```sh
 pi -e /path/to/factory-pi/src/pi-extension.ts
@@ -70,20 +67,18 @@ Ask me to approve this plan. If I request changes, revise the plan and ask again
 | [User guide](docs/guide.md) | Pi setup, `/factory` commands, and credentials |
 | [Syntax reference](docs/syntax.md) | Pipelines, agents, skills, templates, and outputs |
 | [Architecture](docs/architecture.md) | The extension, runner process, state isolation, and replay |
+**[Documentation](https://klab365.github.io/factory-pi/)** · [Getting started & automatic setup](https://klab365.github.io/factory-pi/getting-started/) · [Syntax reference](https://klab365.github.io/factory-pi/syntax/)
 
 ## Development
 
 ```sh
 mise install
-mise run dev-pi            # Launch Pi with the local extension
-mise run dev-pi -- --smoke # Check extension registration without a model
-mise run check             # Format, lint, tests, TypeScript, and pipeline validation
+mise run dev-pi            # Pi with the local extension
+mise run dev-pi -- --smoke # Registration check; no model needed
+mise run check            # Format, lint, tests, types, pipeline validation
+mise run docs:dev         # Documentation at localhost:4321/factory-pi/
 ```
 
-Start the documentation site with `mise run docs:dev` and open <http://localhost:4321/factory-pi/>. Use `mise run docs:build` for a static build or `mise run docs:preview` to preview it locally.
+See the [user guide](https://klab365.github.io/factory-pi/guide/) for local loading and the repository's build/review workflow.
 
-The bundled `software-factory` pipeline implements and reviews a change, then asks for approval before committing and pushing. **Run it only on a separate branch with a clean worktree:** publishing commits all worktree changes and requires Git, Python, and `gh`.
-
-## Operational limits
-
-Factory is a prototype, not a sandbox. Treat pipeline YAML and agent instructions as trusted executable project code. Steps run sequentially; there are no automatic triggers. Shell side effects may be repeated after interruptions, so make commands idempotent. Do not commit `.factory/state/` or persist secrets as outputs.
+Factory is not a sandbox: only run trusted pipelines, make side effects idempotent, and keep secrets and `.factory/state/` out of Git. The repository's `software-factory` pipeline commits and pushes **all** worktree changes after approval; use a separate branch and start with a clean worktree.

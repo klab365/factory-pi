@@ -21,6 +21,7 @@ export default defineConfig({
       social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/klab365/factory-pi' }],
       sidebar: [
         { label: 'Home', slug: 'index' },
+        'getting-started',
         'guide',
         'syntax',
         'architecture',

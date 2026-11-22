@@ -7,14 +7,11 @@ Factory adds `/factory` to Pi. It reads pipelines from `.factory/pipelines/` and
 
 ## Factory in Pi
 
-Install Pi separately if needed. Once the Factory package is published, install the extension with:
+New to Factory? Follow [Getting started](getting-started.md) for npm installation, your first run, and automatic project setup. This guide covers day-to-day use and development.
 
-```sh
-pi install npm:pi-software-factory
-pi update
-```
+### Load a local checkout
 
-To load the extension from a checkout instead, run this from the target project:
+For extension development, install dependencies in the Factory checkout with `bun install --frozen-lockfile`. Then run this from the target project:
 
 ```sh
 pi -e /path/to/factory-pi/src/pi-extension.ts
@@ -22,9 +19,11 @@ pi -e /path/to/factory-pi/src/pi-extension.ts
 
 Install Bun on `PATH`; the extension uses it to launch its internal worker. Configure your model provider in Pi's `auth.json` (normally `~/.pi/agent/auth.json`, or under `PI_CODING_AGENT_DIR` if set). The durable runner reads and may update those credentials.
 
+## Commands
+
 | Command | Behavior |
 | --- | --- |
-| `/factory init` | Create a starter pipeline if none exists, an agents directory, and a local state ignore file. Existing files are preserved. |
+| `/factory init` | Scaffold missing files, then request project setup in the current Pi conversation using the selected model. The model inspects the project and decides which agents are needed; no `builder` agent is prescribed. Setup should add checks and human approval without commit/push steps. Review generated files before validating and running. |
 | `/factory validate [pipeline]` | Validate a pipeline without starting a run or calling a model. Omit the name to choose from project pipelines. |
 | `/factory` or `/factory run` | Select a pipeline and collect inputs. |
 | `/factory run software-factory` | Select that pipeline directly. The `goal` input opens a multiline editor; Escape cancels. |
@@ -35,7 +34,7 @@ Each new run creates an independent, named Pi session. Without an explicit ID, r
 
 Pi's kickoff invokes `factory_run` in a real agent turn and uses the selected Pi model even for a shell-only pipeline. Progress and the timeline are visible in Pi. Cancelling stops the child process tree and leaves the request available to resume. See [Pi process boundary](architecture.md#pi-process-boundary) for the event protocol and cleanup behavior.
 
-### Test the Pi extension locally
+## Test the Pi extension locally
 
 ```sh
 mise run dev-pi
@@ -45,6 +44,12 @@ mise run dev-pi -- --smoke
 `dev-pi` uses a temporary agent directory, loads only the Factory extension, and uses a copy of `auth.json`; OAuth updates affect the copy. It does not load your normal extensions, MCP configuration, skills, prompts, themes, or project-local Pi configuration. Sessions remain under `.factory/state/pi-sessions`. The smoke test does not copy credentials or call a model; it uses RPC to check that `/factory` is registered. This isolates Pi configuration, **not** the project files. Do not run multiple Factory-enabled Pi processes in the same repository at once.
 
 ## Use the repository workflow
+
+This workflow belongs to the Factory repository; `/factory init` does not install it into other projects.
+
+:::caution[Publishing changes]
+Start on a separate branch with a clean worktree. After human approval, this pipeline commits and pushes **all** worktree changes. It requires Python, Git push access, and authenticated `gh`.
+:::
 
 ```sh
 mise install

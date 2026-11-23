@@ -227,6 +227,8 @@ export async function runChild(
         if (event.type === "pending-input") {
           if (!options.human) throw new Error("Human input requires interactive Pi");
           const prompt = humanPrompt(event);
+          // Publish the full checkpoint before opening the compact Pi dialog.
+          onEvent({ ...event, runId: request.runId });
           void options
             .human(prompt)
             .then((response) => {
@@ -250,7 +252,7 @@ export async function runChild(
             if (!closed) stop();
           }, options.completionGraceMs ?? 1500);
         }
-        onEvent({ ...event, runId: request.runId });
+        if (event.type !== "pending-input") onEvent({ ...event, runId: request.runId });
       } catch (error) {
         failure = error;
         stop();

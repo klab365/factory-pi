@@ -17,7 +17,7 @@ pi install npm:pi-software-factory
 pi
 ```
 
-Select a configured model in Pi, then run `/factory init` in your project. Pi inspects the project and decides which agents its workflow needs; no `builder` agent is assumed. Review the generated workflow, then use `/factory validate` and `/factory run` to select it.
+Select a configured model in Pi, then run `/factory init` in your project. Pi inspects the project and interviews you one focused question at a time (grill-me style), clarifying goals, checks, review needs, and responsibilities. It derives pipelines and agents from your answers, project conventions, and Factory documentation—not a prescribed builder/reviewer template. It explains the design and waits for your approval before editing configuration. Review the generated workflow, then use `/factory validate` and `/factory run` to select it.
 
 ```sh
 pi -e /path/to/factory-pi/src/pi-extension.ts

@@ -23,7 +23,7 @@ Install Bun on `PATH`; the extension uses it to launch its internal worker. Conf
 
 | Command | Behavior |
 | --- | --- |
-| `/factory init` | Scaffold missing files, then request project setup in the current Pi conversation using the selected model. The model inspects the project and decides which agents are needed; no `builder` agent is prescribed. Setup should add checks and human approval without commit/push steps. Review generated files before validating and running. |
+| `/factory init` | Scaffold missing files, then start a project-aware interview in the current Pi conversation using the selected model. Pi asks one focused question at a time, clarifies assumptions, and derives pipelines and agents from your answers, project evidence, and Factory documentation. It discusses review needs without prescribing a builder/reviewer template, explains the proposed design, and waits for approval before editing configuration. No commit/push steps. Review generated files before validating and running. |
 | `/factory validate [pipeline]` | Validate a pipeline without starting a run or calling a model. Omit the name to choose from project pipelines. |
 | `/factory` or `/factory run` | Select a pipeline and collect inputs. |
 | `/factory run software-factory` | Select that pipeline directly. The `goal` input opens a multiline editor; Escape cancels. |

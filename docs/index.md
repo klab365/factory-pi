@@ -18,7 +18,7 @@ Factory adds `/factory` to Pi: combine shell commands, agent tasks, and human ch
 | [Getting started](getting-started.md) | Installation, automatic setup, and first run |
 | [User guide](guide.md) | Commands, credentials, local development, and the repository workflow |
 | [Syntax reference](syntax.md) | Copyable pipelines, agent definitions, skills, and outputs |
-| [Architecture](architecture.md) | How execution, isolation, and replay work |
+| [Architecture](architecture.md) | Why pi-durable, component boundaries, run lifecycle, and recovery trade-offs |
 
 ## Work at your own pace
 

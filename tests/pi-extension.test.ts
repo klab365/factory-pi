@@ -109,7 +109,21 @@ test("Pi replacement loads fresh extension, names session and persists context-f
         (entry) => entry.message?.role === "toolResult" && entry.message.toolName === "factory_run",
       ),
     ).toBe(true);
+    const toolResult = entries.find(
+      (entry) => entry.message?.role === "toolResult" && entry.message.toolName === "factory_run",
+    );
+    expect(toolResult.message.content[0].text).toContain("pipeline completed");
+    expect(toolResult.message.content[0].text).toContain("work: completed (exit 0)");
+    expect(output).toContain("Factory: running test.");
     expect(output).toContain('"type":"tool_execution_update"');
+    expect(
+      entries.some(
+        (entry) =>
+          entry.customType === "factory.timeline" &&
+          entry.data.type === "activity" &&
+          entry.data.kind === "shell",
+      ),
+    ).toBe(true);
     expect(
       entries
         .filter((entry) => entry.customType === "factory.timeline")

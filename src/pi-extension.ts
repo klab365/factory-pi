@@ -1,4 +1,5 @@
 import { Type } from "typebox";
+import { FactoryProgress } from "./pi-progress";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { existsSync } from "node:fs";
@@ -19,13 +20,20 @@ import {
 export default function factoryExtension(pi: ExtensionAPI) {
   let active: AbortController | undefined;
   let activeRun: Promise<void> | undefined;
-  pi.registerEntryRenderer<Record<string, unknown>>("factory.timeline", (entry) => {
+  pi.registerEntryRenderer<Record<string, unknown>>("factory.timeline", (entry, options) => {
+    if (!options.expanded) return new Text("", 0, 0);
     const data = entry.data ?? {};
-    const result = data.result as { summary?: string; feedback?: string } | undefined;
+    const result = data.result !== null && typeof data.result === "object" ? data.result : {};
     const heading = ["Factory", data.type, data.agent ?? data.stepId, data.status]
       .filter(Boolean)
       .join(" · ");
-    const details = [data.text, data.error, data.instruction, result?.summary, result?.feedback]
+    const details = [
+      data.text,
+      data.error,
+      data.instruction,
+      "summary" in result ? result.summary : undefined,
+      "feedback" in result ? result.feedback : undefined,
+    ]
       .filter(Boolean)
       .join("\n");
     return new Text(`${heading}${details ? `\n${details}` : ""}`, 0, 0);
@@ -41,6 +49,16 @@ export default function factoryExtension(pi: ExtensionAPI) {
     description:
       "Execute the pending durable Factory pipeline for this native Pi session. Only use the IDs from the Factory kickoff.",
     parameters: Type.Object({ runId: Type.String(), requestId: Type.String() }),
+    renderResult(result) {
+      return new Text(
+        result.content
+          .filter((part) => part.type === "text")
+          .map((part) => part.text)
+          .join("\n"),
+        0,
+        0,
+      );
+    },
     async execute(_id, params, signal, onUpdate, ctx) {
       const run = readRuns(ctx.cwd).find((item) => item.runId === params.runId);
       if (!run || run.sessionFile !== ctx.sessionManager.getSessionFile())
@@ -54,9 +72,9 @@ export default function factoryExtension(pi: ExtensionAPI) {
         request.requestId !== params.requestId
       )
         throw new Error("No matching pending Factory request");
-      return execute(ctx, request, run, signal, (event) =>
+      return execute(ctx, request, run, signal, (message, event) =>
         onUpdate?.({
-          content: [{ type: "text", text: JSON.stringify(event) }],
+          content: [{ type: "text", text: message }],
           details: event,
         }),
       );
@@ -67,9 +85,10 @@ export default function factoryExtension(pi: ExtensionAPI) {
     request: Request,
     run: Run,
     signal: AbortSignal | undefined,
-    update: (event: Record<string, unknown>) => void,
+    update: (message: string, event: Record<string, unknown>) => void,
   ) {
     if (active) throw new Error("A Factory run is already active in this session");
+    const progress = new FactoryProgress(run.runId);
     const controller = new AbortController();
     active = controller;
     const abort = () => controller.abort(signal?.reason);
@@ -90,34 +109,35 @@ export default function factoryExtension(pi: ExtensionAPI) {
           if (event.type === "completed")
             saveRun(ctx.cwd, { ...run, status: "completed", pending: undefined });
           pi.appendEntry("factory.timeline", { ...event, runId: run.runId });
-          update(event);
-          ctx.ui.setStatus(
-            "factory",
-            `Factory ${run.runId.slice(0, 8)} · ${event.type} ${event.stepId ?? ""} ${event.status ?? ""}`,
-          );
+          const message = progress.accept(event);
+          if (message) {
+            update(progress.progress(), event);
+            ctx.ui.setStatus("factory", message.split("\n")[0]);
+          }
         },
         controller.signal,
         {
           human: async (prompt) => {
             if (!ctx.hasUI) throw new Error("Human input requires interactive Pi");
+            // The complete prompt is in tool progress/history, not the editor-sized
+            // dialog title: approval prompts can contain entire review reports.
             return prompt.choices
-              ? ctx.ui.select(prompt.prompt, prompt.choices)
-              : ctx.ui.input(prompt.prompt);
+              ? ctx.ui.select("Factory decision — see output above", prompt.choices)
+              : ctx.ui.input("Factory response — see output above");
           },
         },
       );
       await activeRun;
       saveRun(ctx.cwd, { ...run, status: "completed", pending: undefined });
       return {
-        content: [{ type: "text" as const, text: `Factory ${run.runId} completed` }],
+        content: [{ type: "text" as const, text: progress.summary() }],
         details: { runId: run.runId },
       };
     } catch (error) {
       pi.appendEntry("factory.timeline", { type: "interrupted", runId: run.runId, error: String(error) });
-      if (!controller.signal.aborted) {
-        ctx.ui.notify(String(error), "error");
-      }
-      throw error;
+      const message = progress.interrupted(error, controller.signal.aborted);
+      if (!controller.signal.aborted) ctx.ui.notify(message, "error");
+      throw new Error(message, { cause: error });
     } finally {
       signal?.removeEventListener("abort", abort);
       active = undefined;

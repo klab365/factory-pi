@@ -79,3 +79,29 @@ The bundled skills are local checklists. References include Obra's [Systematic D
 `.github/workflows/ci.yml` runs `mise run check` for pull requests and pushes to `main`. `mise install` sets up the pinned toolchain and the postinstall hook installs Bun dependencies from `bun.lock`. Commit the updated lockfile after changing dependencies.
 
 Conventional Commits on `main` drive Release Please in `.github/workflows/cd.yml`. The release PR updates the version and changelog. Merging it creates a GitHub release; the publish job verifies and packs that tag, then stages the Pi extension via npm Trusted Publishing (GitHub Actions OIDC). A maintainer must review and approve the staged version on npm before it becomes public. No `NPM_TOKEN` is needed. The trusted publisher for `pi-software-factory` must authorize `klab365/factory-pi`, workflow filename `cd.yml`, with no environment restriction and `npm stage publish` permission enabled. If using `RELEASE_PLEASE_TOKEN` to let release PRs trigger other workflows, configure an appropriate PAT or GitHub App token. GitHub must allow the workflow to create PRs.
+
+### Run output
+
+The `factory_run` tool shows named steps and agents, result summaries, correction
+requests, and human checkpoints. Its final result separates changes, reported
+checks, review/decisions, and reported file paths. Pipeline completion means the
+configured route ended, not necessarily that a human approved it; consult the
+reported decisions. Interrupted runs show the step and `/factory resume <runId>`.
+
+Human checkpoints display their full question and review details in the Factory
+output **before** opening the decision/input dialog. The dialog itself has a short,
+fixed title pointing to the output above, so a long approval report does not expand
+the dialog over the run output. Choices and responses are unchanged; dismissing
+the dialog still leaves the checkpoint available to resume.
+
+Agent summaries remain free-form. For separate final-summary sections, agents can
+include `checks` (or `verification`) and `files` / `artifacts` as strings or lists of
+strings in their `factory-result`. Reviewer `prVerification` is also displayed.
+Factory labels these as reported evidence, not independently verified checks, and
+explicitly says when no separate evidence was provided. Shell step exit results
+are included automatically.
+
+Raw events and shell output remain in `factory.timeline` session entries for
+history/debugging; expand the timeline to inspect them. They are not streamed as
+technical labels or JSON in the normal tool progress display. Resuming includes
+reused durable step results in the summary without rerunning those steps.

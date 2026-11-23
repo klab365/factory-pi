@@ -180,6 +180,24 @@ async function executePipeline(
   if (!current.stepId) return;
   if (!journal.cursor) await saveCursor(journal, current);
 
+  const presentation = (step: RecordValue) => ({
+    name: typeof step.name === "string" ? step.name : String(step.id),
+    kind: step.shell !== undefined ? "shell" : step.human !== undefined ? "human" : "agent",
+    ...(typeof step.agent === "string" ? { agent: step.agent } : {}),
+  });
+  // The cursor skips completed predecessors on resume. Restore their presentation
+  // evidence without replaying effects or appending new durable step records.
+  for (const step of steps) {
+    const stepId = String(step.id);
+    for (let visit = current.visits[stepId] ?? 0; visit > 0; visit--) {
+      const key = `${journal.round > 1 ? `round:${journal.round}:` : ""}${workflowPath}:${jobName}:${name}:${stepId}:${visit}`;
+      const result = journal.completed.has(key) ? journal.results.get(key) : undefined;
+      if (!result) continue;
+      emit("saved-result", { runId: journal.runId, stepId, visit, ...presentation(step), result });
+      break;
+    }
+  }
+
   while (true) {
     const active = current;
     const stepCandidate = stepById.get(active.stepId);
@@ -196,7 +214,14 @@ async function executePipeline(
       if (priorResult) stepResults.set(priorStep, priorResult);
     }
     let result: RecordValue | undefined = journal.completed.has(key) ? journal.results.get(key) : undefined;
+    emit("activity", {
+      runId: journal.runId,
+      stepId,
+      visit,
+      ...presentation(step),
+    });
     if (result) {
+      emit("step", { runId: journal.runId, stepId, visit, status: "completed", result, replayed: true });
       console.log(`↷ ${label} (visit ${visit}): reusing durable result`);
     } else {
       await recordStep(journal, key, stepId, visit, "started");

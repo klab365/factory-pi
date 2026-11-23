@@ -70,7 +70,7 @@ Ask me to approve this plan. If I request changes, revise the plan and ask again
 | --- | --- |
 | [User guide](https://klab365.github.io/factory-pi/guide/) | Pi setup, `/factory` commands, and credentials |
 | [Syntax reference](https://klab365.github.io/factory-pi/syntax/) | Pipelines, agents, skills, templates, and outputs |
-| [Architecture](https://klab365.github.io/factory-pi/architecture/) | The extension, runner process, state isolation, and replay |
+| [Architecture](https://klab365.github.io/factory-pi/architecture/) | Why pi-durable, component boundaries, run lifecycle, and recovery trade-offs |
 
 ## Development
 

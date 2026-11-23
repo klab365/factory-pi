@@ -1,5 +1,5 @@
 import { Type } from "typebox";
-import { FactoryProgress } from "./pi-progress";
+import { compactOutput, FactoryProgress } from "./pi-progress";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { existsSync } from "node:fs";
@@ -21,7 +21,8 @@ export default function factoryExtension(pi: ExtensionAPI) {
   let active: AbortController | undefined;
   let activeRun: Promise<void> | undefined;
   pi.registerEntryRenderer<Record<string, unknown>>("factory.timeline", (entry, options) => {
-    if (!options.expanded) return new Text("", 0, 0);
+    // Returning an empty component still makes Pi insert a transcript spacer.
+    if (!options.expanded) return undefined;
     const data = entry.data ?? {};
     const result = data.result !== null && typeof data.result === "object" ? data.result : {};
     const heading = ["Factory", data.type, data.agent ?? data.stepId, data.status]
@@ -36,7 +37,7 @@ export default function factoryExtension(pi: ExtensionAPI) {
     ]
       .filter(Boolean)
       .join("\n");
-    return new Text(`${heading}${details ? `\n${details}` : ""}`, 0, 0);
+    return new Text(compactOutput(`${heading}${details ? `\n${details}` : ""}`), 0, 0);
   });
   function dispatch(run: Run) {
     pi.sendUserMessage(
@@ -49,12 +50,17 @@ export default function factoryExtension(pi: ExtensionAPI) {
     description:
       "Execute the pending durable Factory pipeline for this native Pi session. Only use the IDs from the Factory kickoff.",
     parameters: Type.Object({ runId: Type.String(), requestId: Type.String() }),
+    renderCall() {
+      return new Text("Factory run", 0, 0);
+    },
     renderResult(result) {
       return new Text(
-        result.content
-          .filter((part) => part.type === "text")
-          .map((part) => part.text)
-          .join("\n"),
+        compactOutput(
+          result.content
+            .filter((part) => part.type === "text")
+            .map((part) => part.text)
+            .join("\n"),
+        ),
         0,
         0,
       );

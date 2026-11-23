@@ -48,6 +48,12 @@ In Pi, select a model and run:
 
 Use `/factory resume` to continue an interrupted run or `/factory refine` to start a follow-up round of a completed one. Pi needs a configured model to start the run, even when the pipeline only contains shell and human steps. Factory's built-in `agent:` steps also use Pi Durable; see the [syntax reference](docs/syntax.md) for a complete agent example.
 
+### Run output
+
+Factory groups progress and results in the **Factory run** tool output without empty padding rows. Internal timeline events are hidden by default and retained unchanged in the Pi session history. To render them, enable expanded tool output before loading the session (Pi may omit hidden entries from the live view). The final report includes results, reported checks, decisions, artifacts, and `/factory refine` for follow-up work. Failures and dismissed human checkpoints show `/factory resume`; checkpoint details remain visible above the response dialog.
+
+Pi controls its startup/help banner, project trust notices, kickoff user-message layout, and spacing between host transcript components. Factory does not suppress those notices or change global Pi settings. Factory's compact rendering is covered by `bun test tests/pi-rendering.test.ts` at 32- and 80-column widths, without model calls.
+
 ## Set up Factory for a repository
 
 To tailor Factory to an existing project, open that repository in Pi with Factory installed and paste this prompt into the coding agent. It interviews you before proposing configuration, then waits for approval before creating or changing files.

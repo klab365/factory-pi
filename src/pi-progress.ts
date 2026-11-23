@@ -4,8 +4,16 @@ function record(value: unknown): RecordValue {
     ? Object.fromEntries(Object.entries(value))
     : {};
 }
+/** Remove empty rows without changing indentation or meaningful line breaks. */
+export function compactOutput(value: string): string {
+  return value
+    .split(/\r?\n/)
+    .filter((line) => line.trim())
+    .join("\n")
+    .trim();
+}
 function text(value: unknown): string {
-  return typeof value === "string" ? value.trim() : "";
+  return typeof value === "string" ? compactOutput(value) : "";
 }
 function evidence(value: unknown): string {
   if (Array.isArray(value)) return value.map(evidence).filter(Boolean).join("; ");
@@ -65,12 +73,13 @@ export class FactoryProgress {
       if (detail) message += `\n${detail}`;
     }
     if (!message) return undefined;
+    message = compactOutput(message);
     this.lines.push(message);
     return message;
   }
 
   progress(): string {
-    return this.lines.join("\n\n");
+    return this.lines.join("\n");
   }
 
   summary(): string {
@@ -104,10 +113,13 @@ export class FactoryProgress {
       `Checks (reported):\n${checks.join("\n") || "No separate check results reported; see step summaries above."}`,
       `Review / decisions:\n${decisions.join("\n") || "No review or human decision reported."}`,
       `Files / artifacts (reported):\n${files.join("\n") || "No file paths reported; see step summaries above."}`,
-    ].join("\n\n");
+      `Next: /factory refine ${this.runId} for follow-up work.`,
+    ].join("\n");
   }
 
   interrupted(error: unknown, cancelled: boolean): string {
-    return `Factory ${this.runId}: ${this.waiting ? "waiting for human input" : cancelled ? "cancelled" : "failed"}${this.current ? ` at ${this.current}` : ""}.\n${error instanceof Error ? error.message : String(error)}\n${this.waiting ? "Respond to the pending checkpoint" : "Resolve the interruption and retry"} with /factory resume ${this.runId}.`;
+    return compactOutput(
+      `Factory ${this.runId}: ${this.waiting ? "waiting for human input" : cancelled ? "cancelled" : "failed"}${this.current ? ` at ${this.current}` : ""}.\n${error instanceof Error ? error.message : String(error)}\n${this.waiting ? "Respond to the pending checkpoint" : "Resolve the interruption and retry"} with /factory resume ${this.runId}.`,
+    );
   }
 }

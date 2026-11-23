@@ -5,15 +5,12 @@
 
 ### Features
 
-* **init:** interview users before designing project workflows ([ab2223f](https://github.com/klab365/factory-pi/commit/ab2223f5e50a833f34bc37c20c93746eacb11cdd))
 * **init:** interview users before designing project workflows ([19c084d](https://github.com/klab365/factory-pi/commit/19c084d0aa66dd25cd238fc3ddf81a1deada3b9b))
-* **pi:** show readable Factory progress and final summaries ([84eed83](https://github.com/klab365/factory-pi/commit/84eed837879d44c80f411d48764615f4df28b0da))
 * **pi:** show readable Factory progress and final summaries ([aa56e39](https://github.com/klab365/factory-pi/commit/aa56e392791444c42dad3d026f3bd8dce4723e21))
 
 
 ### Bug Fixes
 
-* **pi:** compact Factory run progress and result output ([b2de398](https://github.com/klab365/factory-pi/commit/b2de398ea4977bf036b6735dd80772618bec380a))
 * **pi:** compact Factory run progress and result output ([4609576](https://github.com/klab365/factory-pi/commit/46095766108078356dbf1aff6942d77b999063e6))
 
 ## [0.4.1](https://github.com/klab365/factory-pi/compare/pi-software-factory-v0.4.0...pi-software-factory-v0.4.1) (2026-11-22)
@@ -22,9 +19,7 @@
 ### Bug Fixes
 
 * **deps:** align pi-ai dev version with durable ([5d6eabc](https://github.com/klab365/factory-pi/commit/5d6eabc9b5d06288883daa403ffdd5f94b823c0f))
-* **package:** declare Pi host modules as peers ([d17593a](https://github.com/klab365/factory-pi/commit/d17593ae12d7a9663f65c81aa320e7074f22f472))
 * **package:** declare Pi host modules as peers ([b68ae5c](https://github.com/klab365/factory-pi/commit/b68ae5c8075fef486eac7f306c1972462de35be7))
-* **runner:** allow unlimited agent visits by default ([cd332c6](https://github.com/klab365/factory-pi/commit/cd332c6ce2380d90b5b61f4c27d45b519dfe6abc))
 * **runner:** allow unlimited agent visits by default ([3546aff](https://github.com/klab365/factory-pi/commit/3546afffc8cb4a01edfc199956f84fa3464b4ec9))
 
 ## [0.4.0](https://github.com/klab365/factory-pi/compare/pi-software-factory-v0.3.0...pi-software-factory-v0.4.0) (2026-11-22)
@@ -39,7 +34,6 @@
 
 ### Features
 
-* **factory:** add setup prompt and publisher agent ([265ea99](https://github.com/klab365/factory-pi/commit/265ea99bd6ba58c8571c4637d3ebb969b26a9e98))
 * **factory:** add setup prompt and publisher agent ([1a7cf16](https://github.com/klab365/factory-pi/commit/1a7cf1677550565011da6a634e5ae528a11f5564))
 
 ## [0.2.0](https://github.com/klab365/factory-pi/compare/pi-software-factory-v0.1.0...pi-software-factory-v0.2.0) (2026-11-22)
@@ -47,5 +41,4 @@
 
 ### Features
 
-* ship Factory as a Pi extension ([09b8e13](https://github.com/klab365/factory-pi/commit/09b8e1332f41e16a295ac073a65c947c0b91d049))
 * ship Factory as a Pi extension ([acd5ae7](https://github.com/klab365/factory-pi/commit/acd5ae788888ae26f06d0d65fb929faa3096f66b))

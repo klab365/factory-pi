@@ -94,6 +94,52 @@ The bundled skills are local checklists. References include Obra's [Systematic D
 
 Conventional Commits on `main` drive Release Please in `.github/workflows/cd.yml`. The release PR updates the version and changelog. Merging it creates a GitHub release; the publish job verifies and packs that tag, then stages the Pi extension via npm Trusted Publishing (GitHub Actions OIDC). A maintainer must review and approve the staged version on npm before it becomes public. No `NPM_TOKEN` is needed. The trusted publisher for `pi-software-factory` must authorize `klab365/factory-pi`, workflow filename `cd.yml`, with no environment restriction and `npm stage publish` permission enabled. If using `RELEASE_PLEASE_TOKEN` to let release PRs trigger other workflows, configure an appropriate PAT or GitHub App token. GitHub must allow the workflow to create PRs.
 
+### Release notes and merge strategy
+
+Keep using Conventional Commit PR titles and commits (`feat:`, `fix:`, and
+`BREAKING CHANGE` / `!` for breaking changes). Merge commits, squash merges, and
+rebases remain supported; no repository merge-setting change is required.
+Release Please still uses Conventional Commits to choose the version, but
+`release-please-config.json` selects `changelog-type: github` for the notes.
+GitHub's generated release notes list merged PRs rather than individual commits,
+so a merge commit containing the PR title and its constituent commit do not
+produce two entries. Keep one logical change per PR. Multiple PRs with similar
+titles are intentionally separate entries, not deduplicated by title.
+
+The notes now use GitHub's “What's Changed” format with PR links and authors,
+rather than Conventional Commit feature/fix sections. They can also include
+documentation, test, and release PRs; these do not change Conventional Commit
+version calculation. Direct pushes are not guaranteed a PR entry, so land
+user-facing changes through PRs.
+
+Historical duplicates in `CHANGELOG.md` (0.2.0, 0.3.0, 0.4.1, and 0.5.0) were
+removed, retaining the original implementation commit links. Existing versions,
+tags, and published GitHub releases are unchanged; do not republish old versions
+just to update their notes.
+
+To reproduce the non-publishing dry-run against the merge-heavy 0.5.0 history
+(requires authenticated `gh` and `jq`):
+
+```sh
+gh api --method POST repos/klab365/factory-pi/releases/generate-notes \
+  -f tag_name=pi-software-factory-v0.5.0 \
+  -f previous_tag_name=pi-software-factory-v0.4.1 \
+  -f target_commitish=9738c24 \
+  --jq .body > /tmp/factory-pi-release-notes.txt
+cat /tmp/factory-pi-release-notes.txt
+jq -Rse '
+  . as $notes |
+  ["feat(init): interview users before designing project workflows",
+   "feat(pi): show readable Factory progress and final summaries",
+   "fix(pi): compact Factory run progress and result output"] |
+  all(.[]; . as $title | ($notes | split($title) | length) == 2)
+' /tmp/factory-pi-release-notes.txt
+```
+
+The assertion requires exactly one occurrence of each previously duplicated
+change. This calls the same generated-notes API used by Release Please's GitHub
+changelog strategy; it does not create a release or change tags.
+
 ### Run output
 
 The `factory_run` tool shows named steps and agents, result summaries, correction

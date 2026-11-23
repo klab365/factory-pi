@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.1 (2026-11-23)
+
+## What's Changed
+* fix(release): generate changelogs from merged pull requests by @BuriKizilkaya in https://github.com/klab365/factory-pi/pull/46
+* fix(release): publish npm package automatically by @BuriKizilkaya in https://github.com/klab365/factory-pi/pull/48
+
+
+**Full Changelog**: https://github.com/klab365/factory-pi/compare/pi-software-factory-v0.5.0...pi-software-factory-v0.5.1
+
 ## [0.5.0](https://github.com/klab365/factory-pi/compare/pi-software-factory-v0.4.1...pi-software-factory-v0.5.0) (2026-11-23)
 
 

@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.5.0](https://github.com/klab365/factory-pi/compare/pi-software-factory-v0.4.1...pi-software-factory-v0.5.0) (2026-11-23)
+
+
+### Features
+
+* **init:** interview users before designing project workflows ([ab2223f](https://github.com/klab365/factory-pi/commit/ab2223f5e50a833f34bc37c20c93746eacb11cdd))
+* **init:** interview users before designing project workflows ([19c084d](https://github.com/klab365/factory-pi/commit/19c084d0aa66dd25cd238fc3ddf81a1deada3b9b))
+* **pi:** show readable Factory progress and final summaries ([84eed83](https://github.com/klab365/factory-pi/commit/84eed837879d44c80f411d48764615f4df28b0da))
+* **pi:** show readable Factory progress and final summaries ([aa56e39](https://github.com/klab365/factory-pi/commit/aa56e392791444c42dad3d026f3bd8dce4723e21))
+
+
+### Bug Fixes
+
+* **pi:** compact Factory run progress and result output ([b2de398](https://github.com/klab365/factory-pi/commit/b2de398ea4977bf036b6735dd80772618bec380a))
+* **pi:** compact Factory run progress and result output ([4609576](https://github.com/klab365/factory-pi/commit/46095766108078356dbf1aff6942d77b999063e6))
+
 ## [0.4.1](https://github.com/klab365/factory-pi/compare/pi-software-factory-v0.4.0...pi-software-factory-v0.4.1) (2026-11-22)
 
 

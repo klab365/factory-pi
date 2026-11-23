@@ -17,6 +17,8 @@ pi install npm:pi-software-factory
 pi
 ```
 
+npm may report upstream `node-domexception` deprecation and blocked install-script warnings for `@google/genai` and `protobufjs`. These scripts are not required; **do not approve them just to silence warnings**. See [installation warnings](https://klab365.github.io/factory-pi/guide/#npm-installation-warnings) for the dependency trace and verification scope.
+
 Select a configured model in Pi, then run `/factory init` in your project. Pi inspects the project and interviews you one focused question at a time (grill-me style), clarifying goals, checks, review needs, and responsibilities. It derives pipelines and agents from your answers, project conventions, and Factory documentation—not a prescribed builder/reviewer template. It explains the design and waits for your approval before editing configuration. Review the generated workflow, then use `/factory validate` and `/factory run` to select it.
 
 ```sh
@@ -85,6 +87,7 @@ mise install
 mise run dev-pi            # Pi with the local extension
 mise run dev-pi -- --smoke # Registration check; no model needed
 mise run check            # Format, lint, tests, types, pipeline validation
+bun run test:package      # Pack + fresh npm install without scripts (registry access)
 mise run docs:dev         # Documentation at localhost:4321/factory-pi/
 ```
 

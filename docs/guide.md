@@ -9,6 +9,20 @@ Factory adds `/factory` to Pi. It reads pipelines from `.factory/pipelines/` and
 
 New to Factory? Follow [Getting started](getting-started.md) for npm installation, your first run, and automatic project setup. This guide covers day-to-day use and development.
 
+### npm installation warnings
+
+Installation can succeed while npm warns about upstream dependencies:
+
+- `node-domexception@1.0.0` is deprecated in favor of the platform's native `DOMException`. The dependency path is Factory → `@earendil-works/pi-durable` → `@earendil-works/pi-ai` → `@google/genai` → `google-auth-library` → `gaxios` → `node-fetch` → `fetch-blob` → `node-domexception`. `gcp-metadata` also introduces `gaxios`, and `formdata-polyfill` also introduces `fetch-blob`. The Pi coding-agent peer introduces Pi AI and the same Google dependency chain as well.
+- `@google/genai` (observed at 2.21.0 and 2.32.0) declares a `preinstall` that only echoes `preinstall: no-op`. It builds or downloads nothing.
+- `protobufjs@7.6.6`, introduced by `@google/genai`, declares `postinstall: node scripts/postinstall`. This script only checks a dependent's declared version range against its `~` version scheme and optionally prints a compatibility warning. It does not generate runtime files, compile native code, or download assets. The published JavaScript is ready to use without it.
+
+**No script approval is needed for these packages.** Leave npm's install-script policy enabled; do not use `--dangerously-allow-all-scripts` or blanket approvals to suppress notices. A successful install with these warnings alone is not evidence of a Factory runtime failure. Factory has no install-time scripts of its own. A dependency's `allowScripts` or `overrides` field cannot impose policy on Pi's npm installation root, so Factory does not ship a misleading approval/override configuration.
+
+The deprecation remains upstream: when investigated for issue #41, even current Pi AI 1.6.0 uses this chain; current `node-fetch` 3.3.2 and `fetch-blob` 4.0.0 still depend on the deprecated package. Updating Factory's Pi packages therefore would not remove it. Replacing Google's authentication HTTP stack or forcing an out-of-range override merely to hide the warning would risk provider compatibility. Removal requires an upstream migration, not enabling scripts.
+
+CI runs `bun run test:package`: it packs the actual publishable files, installs the archive into a fresh temporary consumer using npm `--ignore-scripts --omit=dev` (including automatically installed peers), loads `/factory` in isolated offline Pi, constructs the Google SDK client, round-trips protobuf data, and executes/resumes a shell pipeline through the durable runner. It then reinstalls with npm's `--strict-allow-scripts` policy, explicitly denying only `@google/genai` and `protobufjs` in the temporary consumer root, and repeats the runtime checks. Any new unreviewed install scripts fail that policy check. No credentials or model calls are used. This verifies local loading, persistence and replay with **all** dependency install scripts disabled; it does not claim live Google/provider API coverage or exercise Pi's package-manager UI. The check needs registry access and uses the repository's Node/npm (npm 11.19.1 with install-script policy support) and Bun toolchain. Ordinary `bun test` remains network-free. New upstream versions or new script warnings should be reviewed separately.
+
 ### Load a local checkout
 
 For extension development, install dependencies in the Factory checkout with `bun install --frozen-lockfile`. Then run this from the target project:

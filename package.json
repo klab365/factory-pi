@@ -7,6 +7,7 @@
     "check-format": "biome format src tests",
     "lint": "biome lint src tests",
     "test": "bun test",
+    "test:package": "bun run scripts/package-smoke.ts",
     "typecheck": "tsc --noEmit",
     "check": "bun run check-format && bun run lint && bun run test && bun run typecheck && bun run validate",
     "docs:dev": "astro dev",

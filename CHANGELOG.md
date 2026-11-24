@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.2 (2026-11-24)
+
+## What's Changed
+* fix(worker): use Pi's Node runtime by @BuriKizilkaya in https://github.com/klab365/factory-pi/pull/49
+
+
+**Full Changelog**: https://github.com/klab365/factory-pi/compare/pi-software-factory-v0.5.1...pi-software-factory-v0.5.2
+
 ## 0.5.1 (2026-11-23)
 
 ## What's Changed

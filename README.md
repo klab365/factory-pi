@@ -10,7 +10,7 @@ Define shell commands, agent tasks, and human checkpoints in project-local YAML.
 
 ## Get started
 
-With [Pi](https://github.com/earendil-works/pi) and [Bun](https://bun.sh/) installed:
+With [Pi](https://github.com/earendil-works/pi) installed:
 
 ```sh
 pi install npm:pi-software-factory

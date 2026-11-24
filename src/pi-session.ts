@@ -158,7 +158,7 @@ export async function runChild(
 ): Promise<void> {
   signal?.throwIfAborted();
   const worker = fileURLToPath(new URL("./worker.ts", import.meta.url));
-  const child = spawn(options.command ?? "bun", options.args ?? ["run", worker], {
+  const child = spawn(options.command ?? process.execPath, options.args ?? [worker], {
     cwd: root,
     stdio: ["pipe", "pipe", "pipe"],
     // A dedicated POSIX process group allows runner-wide cleanup; the worker relays signals to

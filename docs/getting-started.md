@@ -13,7 +13,7 @@ With [Pi](https://github.com/earendil-works/pi) already installed, add Factory f
 pi install npm:pi-software-factory
 ```
 
-You also need **[Bun 1.3+](https://bun.sh/docs/installation)** on your `PATH` for Factory's worker. There is no need to reinstall Pi or run a separate global `npm install` for Factory. Use `pi update` to update installed packages later.
+Factory runs its worker with the Node.js runtime used by Pi; no separate Bun installation is required. There is no need to reinstall Pi or run a separate global `npm install` for Factory. Use `pi update` to update installed packages later.
 
 If npm reports `node-domexception` deprecation or blocked `@google/genai`/`protobufjs` scripts, no approval is needed for those scripts. See [npm installation warnings](guide.md#npm-installation-warnings) for details; keep npm's script protections enabled.
 

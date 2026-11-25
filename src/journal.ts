@@ -14,16 +14,22 @@ export async function openJournal(
   requestedInputs: () => Record<string, string>,
   runtime: ReturnType<typeof createAgentRuntime>,
   selection?: { mode: "new" | "resume" | "refine"; runId?: string; instruction?: string; requestId?: string },
+  onStage: (stage: string) => void = () => {},
 ) {
+  onStage("journal:open-storage:started");
   const storage = await openNodeJsonlStorage(resolve(root, ".factory/state/durable"), BACKGROUND_CONTEXT);
+  onStage("journal:open-storage:completed");
   let scope: Awaited<ReturnType<typeof scopeRunStorage>>;
   try {
+    onStage("journal:scope-storage:started");
     scope = await scopeRunStorage(storage, workflowPath, selection);
+    onStage("journal:scope-storage:completed");
   } catch (error) {
     await storage.close(BACKGROUND_CONTEXT);
     throw error;
   }
   selection = { ...(selection ?? { mode: "new" }), runId: scope.runId };
+  onStage("journal:harness-open:started");
   const harness = await Harness.open(
     scope.storage,
     {
@@ -33,8 +39,11 @@ export async function openJournal(
     },
     BACKGROUND_CONTEXT,
   );
+  onStage("journal:harness-open:completed");
   try {
+    onStage("journal:root-conversation:started");
     const indexConversation = await harness.root(BACKGROUND_CONTEXT);
+    onStage("journal:root-conversation:completed");
     const runs = new Map<
       string,
       {
@@ -50,6 +59,7 @@ export async function openJournal(
     const agentIds = new Map<string, ConversationId>();
     let savedCursor: { stepId: string; visit: number; visits: Record<string, number> } | undefined;
     let cursor: Cursor | undefined;
+    onStage("journal:read-run-index:started");
     do {
       const page = await indexConversation.entries({ order: "ascending" }, 500, cursor, BACKGROUND_CONTEXT);
       for (const entry of page.items) {
@@ -76,6 +86,7 @@ export async function openJournal(
       }
       cursor = page.next;
     } while (cursor);
+    onStage("journal:read-run-index:completed");
     const activeRun =
       selection?.mode === "new"
         ? [...runs].find(([id]) => id === selection.runId)
@@ -94,6 +105,7 @@ export async function openJournal(
     let inputs = activeRun?.[1].inputs ?? requestedInputs();
     let round = 1;
     let conversation: Conversation;
+    onStage("journal:load-run-conversation:started");
     if (!runId) {
       runId = selection?.runId ?? crypto.randomUUID();
       const newRunId = runId;
@@ -135,6 +147,8 @@ export async function openJournal(
       conversation = saved;
       console.log("↻ Resuming durable run; using its saved inputs");
     }
+    onStage("journal:load-run-conversation:completed");
+    onStage("journal:read-run-history:started");
     cursor = undefined;
     do {
       const page = await conversation.entries({ order: "ascending" }, 500, cursor, BACKGROUND_CONTEXT);
@@ -184,6 +198,7 @@ export async function openJournal(
       }
       cursor = page.next;
     } while (cursor);
+    onStage("journal:read-run-history:completed");
     if (
       selection?.mode === "refine" &&
       (!selection.requestId || activeRun?.[1].requestId !== selection.requestId)
@@ -211,6 +226,7 @@ export async function openJournal(
       savedCursor = undefined;
     }
     // Resolve every saved ID before resuming work; never replace missing history.
+    onStage("journal:restore-agent-conversations:started");
     const agentConversations = new Map<string, Promise<Conversation>>();
     for (const [agentName, id] of agentIds) {
       const saved = await harness.conversation(id, BACKGROUND_CONTEXT);
@@ -218,6 +234,7 @@ export async function openJournal(
         throw new Error(`Conversation '${id}' for agent '${agentName}' in run '${runId}' is missing`);
       agentConversations.set(agentName, Promise.resolve(saved));
     }
+    onStage("journal:restore-agent-conversations:completed");
     const agentRunId = runId;
     function agentConversation(agentName: string): Promise<Conversation> {
       const existing = agentConversations.get(agentName);
@@ -245,7 +262,7 @@ export async function openJournal(
     }
     return {
       agentConversation,
-      async runAgent(agentName: string, task: string, requestId: string) {
+      async runAgent(agentName: string, task: string, requestId: string, signal?: AbortSignal) {
         // Before agent isolation, this visit may already have been admitted in the
         // run conversation (including root for legacy runs). Consume that exact
         // submission, and its existing handoff tree, rather than starting it again.
@@ -254,7 +271,7 @@ export async function openJournal(
           BACKGROUND_CONTEXT,
         );
         const target = previous ? conversation : await agentConversation(agentName);
-        return runtime.runAgent(target, agentName, task, requestId);
+        return runtime.runAgent(target, agentName, task, requestId, signal);
       },
       harness,
       indexConversation,

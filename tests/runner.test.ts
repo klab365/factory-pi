@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { parse, stringify } from "yaml";
+import { stepMaxVisits } from "../src/pipeline-validation";
 
 const repository = resolve(import.meta.dir, "..");
 function runFixture(cwd: string, ...args: string[]) {
@@ -167,12 +168,11 @@ describe("factory runner", () => {
     );
   });
 
-  test("shell steps still default to one visit", () => {
-    fixture("steps:\n  - id: work\n    shell: 'true'\n    transitions: {completed: work}\n", (root) => {
-      const result = runFixture(root, "run", "test");
-      expect(result.exitCode).toBe(1);
-      expect(result.output).toContain("exceeded maxVisits (1)");
-    });
+  test("agent, shell, and human steps are unbounded by default but keep explicit limits", () => {
+    expect(stepMaxVisits({ agent: "builder" }, "build")).toBeUndefined();
+    expect(stepMaxVisits({ shell: "true" }, "work")).toBeUndefined();
+    expect(stepMaxVisits({ human: {} }, "clarify")).toBeUndefined();
+    expect(stepMaxVisits({ human: {}, maxVisits: 3 }, "clarify")).toBe(3);
   });
 
   test("routes shell outcomes and preserves maxVisits across resume", () => {

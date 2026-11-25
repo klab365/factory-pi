@@ -2,7 +2,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve, isAbsolute, relative, sep } from "node:path";
 import { parse } from "yaml";
-import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
+import { BACKGROUND_CONTEXT, withAbortSignal, type Context } from "@earendil-works/chord/context";
 import { obj, opt, str } from "@earendil-works/pi-schema";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import {
@@ -39,6 +39,7 @@ type AgentRuntime = {
     agentName: string,
     task: string,
     requestId: string,
+    signal?: AbortSignal,
   ): Promise<AgentOutcome>;
 };
 const fail = (message: string): never => {
@@ -309,20 +310,21 @@ export function createAgentRuntime(root: string, pipeline: RecordValue): AgentRu
     registry,
     models,
     agentChange: changeFor,
-    async runAgent(conversation, agentName, task, requestId) {
+    async runAgent(conversation, agentName, task, requestId, signal) {
+      const context = signal ? withAbortSignal(signal, BACKGROUND_CONTEXT) : BACKGROUND_CONTEXT;
       const previous = await conversation.commit(
         (tx) => tx.submissionByRequest(conversation.id, requestId),
-        BACKGROUND_CONTEXT,
+        context,
       );
       // Do not reconfigure an admitted turn: it can still be running, with its
       // original handoff children, or already answered but not checkpointed yet.
-      if (!previous) await conversation.configure(changeFor(agentName), BACKGROUND_CONTEXT);
+      if (!previous) await conversation.configure(changeFor(agentName), context);
       const { outcome } = await requestOutcome(
         conversation,
         agentName,
         task,
         requestId,
-        BACKGROUND_CONTEXT,
+        context,
         `Agent '${agentName}'`,
       );
       return outcome;

@@ -31,7 +31,7 @@ For extension development, install dependencies in the Factory checkout with `bu
 pi -e /path/to/factory-pi/src/pi-extension.ts
 ```
 
-Install Bun on `PATH`; the extension uses it to launch its internal worker. Configure your model provider in Pi's `auth.json` (normally `~/.pi/agent/auth.json`, or under `PI_CODING_AGENT_DIR` if set). The durable runner reads and may update those credentials.
+The pipeline runner executes in the Pi process; no separate Bun installation is required. Configure your model provider in Pi's `auth.json` (normally `~/.pi/agent/auth.json`, or under `PI_CODING_AGENT_DIR` if set). The durable runner reads and may update those credentials.
 
 ## Commands
 
@@ -46,7 +46,7 @@ Install Bun on `PATH`; the extension uses it to launch its internal worker. Conf
 
 Each new run creates an independent, named Pi session. Without an explicit ID, refine lists completed runs in the current worktree and automatically selects a single match. Factory normalizes symlinks and Git subdirectories; moving a checkout changes its workspace identity. Older records without an identity remain usable by explicit ID; a run known to belong to another worktree must be opened there.
 
-Pi's kickoff invokes `factory_run` in a real agent turn and uses the selected Pi model even for a shell-only pipeline. Progress and the timeline are visible in Pi. Cancelling stops the child process tree and leaves the request available to resume. See [Pi process boundary](architecture.md#pi-process-boundary) for the event protocol and cleanup behavior.
+Pi's kickoff invokes `factory_run` in a real agent turn and uses the selected Pi model even for a shell-only pipeline. Progress and the timeline are visible in Pi. Cancelling leaves the request available to resume and stops an active shell step; agent cancellation follows Durable's abort context. The runner executes in-process, while configured shell commands still run as child processes.
 
 ## Test the Pi extension locally
 

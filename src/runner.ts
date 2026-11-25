@@ -16,7 +16,7 @@ import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import { humanPrompt, humanResult, type HumanPrompt } from "./human";
 import { mapOutputs, OUTPUT_LIMIT } from "./step-outputs";
-const root = process.cwd();
+let root = process.cwd();
 let eventSink: ((event: RecordValue) => void) | undefined;
 function emit(type: string, data: RecordValue) {
   eventSink?.({ type, ...data });
@@ -48,9 +48,10 @@ async function recordStep(
   }
 }
 
-async function runCommand(spec: ShellSpec, label: string): Promise<RecordValue> {
+async function runCommand(spec: ShellSpec, label: string, signal?: AbortSignal): Promise<RecordValue> {
+  signal?.throwIfAborted();
   const command = spec.command;
-  console.log(`\n▶ ${label}: ${command}`);
+  if (!eventSink) console.log(`\n▶ ${label}: ${command}`);
   const child = spawn("bash", ["-lc", command], {
     cwd: resolve(root, spec.workingDirectory),
     env: { ...process.env, ...spec.env },
@@ -93,6 +94,7 @@ async function runCommand(spec: ShellSpec, label: string): Promise<RecordValue> 
     });
   };
   const onSignal = () => stop();
+  signal?.addEventListener("abort", onSignal, { once: true });
   process.once("SIGINT", onSignal);
   process.once("SIGTERM", onSignal);
   let capturedBytes = 0;
@@ -132,6 +134,7 @@ async function runCommand(spec: ShellSpec, label: string): Promise<RecordValue> 
     await killPromise;
     if (outputOverflow) fail(`Step '${label}' exceeds output limit`);
     if (timedOut) fail(`Step '${label}' timed out after ${spec.timeout} ms`);
+    if (signal?.aborted) throw signal.reason ?? new Error("Factory cancelled");
     if (stopping) fail(`Step '${label}' was cancelled`);
     if (code !== 0) fail(`Step '${label}' failed with exit code ${code}`);
     return {
@@ -144,6 +147,7 @@ async function runCommand(spec: ShellSpec, label: string): Promise<RecordValue> 
   } finally {
     if (timeoutTimer) clearTimeout(timeoutTimer);
     if (killTimer) clearTimeout(killTimer);
+    signal?.removeEventListener("abort", onSignal);
     process.removeListener("SIGINT", onSignal);
     process.removeListener("SIGTERM", onSignal);
   }
@@ -164,8 +168,9 @@ async function executePipeline(
   journal: DurableJournal,
   inputs: Record<string, string>,
   requestHuman: HumanHandler,
+  signal?: AbortSignal,
 ): Promise<void> {
-  const pipeline = loadYaml(factoryFile("pipelines", name, "yml"));
+  const pipeline = loadYaml(factoryFile("pipelines", name, "yml", root));
   if (!Array.isArray(pipeline.steps)) fail(`Pipeline '${name}' must define a steps array`);
   const steps = (pipeline.steps as unknown[]).map((raw, index) =>
     object(raw, `Pipeline '${name}' step ${index + 1}`),
@@ -199,6 +204,7 @@ async function executePipeline(
   }
 
   while (true) {
+    signal?.throwIfAborted();
     const active = current;
     const stepCandidate = stepById.get(active.stepId);
     if (!stepCandidate) throw new Error(`Cursor references unknown step '${active.stepId}'`);
@@ -221,8 +227,8 @@ async function executePipeline(
       ...presentation(step),
     });
     if (result) {
+      if (!eventSink) console.log(`↷ ${label} (visit ${visit}): reusing durable result`);
       emit("step", { runId: journal.runId, stepId, visit, status: "completed", result, replayed: true });
-      console.log(`↷ ${label} (visit ${visit}): reusing durable result`);
     } else {
       await recordStep(journal, key, stepId, visit, "started");
       try {
@@ -233,13 +239,13 @@ async function executePipeline(
           for (const [key, value] of Object.entries(shell.env)) {
             shell.env[key] = interpolate(value, inputs, false, stepResults);
           }
-          result = await runCommand(shell, label);
+          result = await runCommand(shell, label, signal);
         } else if (typeof step.agent === "string") {
           const task = interpolate(string(step.task, `Step '${label}' task`), inputs, false, stepResults);
-          console.log(`\n▶ ${label} (${step.agent}, visit ${visit})`);
+          if (!eventSink) console.log(`\n▶ ${label} (${step.agent}, visit ${visit})`);
           emit("agent", { runId: journal.runId, stepId, agent: step.agent, visit, status: "started" });
           const requestId = `factory-${journal.runId}-${journal.round > 1 ? `round-${journal.round}-` : ""}${stepId}-${visit}`;
-          result = await journal.runAgent(step.agent, task, requestId);
+          result = await journal.runAgent(step.agent, task, requestId, signal);
         } else if (step.human !== undefined) {
           const prompt = humanPrompt(step.human);
           prompt.prompt = interpolate(prompt.prompt, inputs, false, stepResults);
@@ -337,26 +343,38 @@ export async function runPipeline(
   requestHuman: HumanHandler = async () => {
     throw new Error("Human response required");
   },
+  signal?: AbortSignal,
+  projectRoot = process.cwd(),
 ): Promise<void> {
+  signal?.throwIfAborted();
+  root = projectRoot;
   eventSink = onEvent;
+  emit("diagnostic", { runId: selection?.runId, stage: "validate-pipeline:started" });
   const pipeline = validatePipeline(root, name);
   collectInputs(pipeline, args, false);
+  emit("diagnostic", { runId: selection?.runId, stage: "validate-pipeline:completed" });
+  emit("diagnostic", { runId: selection?.runId, stage: "create-agent-runtime:started" });
   const runtime = createAgentRuntime(root, pipeline);
+  emit("diagnostic", { runId: selection?.runId, stage: "create-agent-runtime:completed" });
   const workflowPath = `pipeline:${name}`;
+  emit("diagnostic", { runId: selection?.runId, stage: "open-journal:started" });
   const journal = await openJournal(
     root,
     workflowPath,
     () => collectInputs(pipeline, args),
     runtime,
     selection,
+    (stage) => emit("diagnostic", { runId: selection?.runId, stage }),
   );
+  signal?.throwIfAborted();
+  emit("diagnostic", { runId: journal.runId, stage: "open-journal:completed" });
   emit("run", { runId: journal.runId, pipeline: name, round: journal.round });
   const inputs = journal.inputs;
   journal.harness.resume();
   try {
-    console.log(`━━ Pipeline: ${name} ━━`);
-    await executePipeline(name, workflowPath, name, journal, inputs, requestHuman);
-    console.log("\n✓ Factory pipeline completed");
+    if (!eventSink) console.log(`━━ Pipeline: ${name} ━━`);
+    await executePipeline(name, workflowPath, name, journal, inputs, requestHuman, signal);
+    if (!eventSink) console.log("\n✓ Factory pipeline completed");
     await appendEvent(journal.indexConversation, "factory.run", {
       conversationId: journal.conversation.id,
       runId: journal.runId,

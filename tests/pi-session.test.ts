@@ -163,7 +163,7 @@ test("a durable completion settles even if the runner hangs during shutdown", as
         (event) => {
           events.push(event);
           // Cancellation arriving after the durable terminal event must not undo success.
-          controller.abort(new Error("late cancellation"));
+          if (event.type === "completed") controller.abort(new Error("late cancellation"));
         },
         controller.signal,
         {
@@ -176,7 +176,9 @@ test("a durable completion settles even if the runner hangs during shutdown", as
         },
       ),
     ).resolves.toBeUndefined();
-    expect(events).toEqual([{ type: "completed", runId: "terminal" }]);
+    expect(events.filter((event) => event.type === "completed")).toEqual([
+      { type: "completed", runId: "terminal" },
+    ]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

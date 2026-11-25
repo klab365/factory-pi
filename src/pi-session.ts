@@ -158,7 +158,9 @@ export async function runChild(
 ): Promise<void> {
   signal?.throwIfAborted();
   const worker = fileURLToPath(new URL("./worker.ts", import.meta.url));
-  const child = spawn(options.command ?? process.execPath, options.args ?? [worker], {
+  // The host may be Pi itself (`process.execPath` is then the Pi CLI, not a TS runtime).
+  // Launch the TypeScript worker with Bun explicitly instead of re-entering the Pi CLI.
+  const child = spawn(options.command ?? "bun", options.args ?? [worker], {
     cwd: root,
     stdio: ["pipe", "pipe", "pipe"],
     // A dedicated POSIX process group allows runner-wide cleanup; the worker relays signals to
@@ -166,6 +168,7 @@ export async function runChild(
     // Do not pass signal to spawn: its immediate-child abort can settle before cleanup.
     detached: process.platform !== "win32",
   });
+  onEvent({ type: "diagnostic", runId: request.runId, stage: "host:worker-spawned" });
   let stopping: Promise<void> | undefined;
   let failure: unknown;
   let completed = false;
@@ -274,6 +277,7 @@ export async function runChild(
       });
     });
     child.stdin.write(`${JSON.stringify(request)}\n`);
+    onEvent({ type: "diagnostic", runId: request.runId, stage: "host:request-written" });
     const code = await childClosed;
     await stopping;
     if (failure !== undefined) throw failure;

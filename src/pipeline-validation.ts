@@ -58,9 +58,9 @@ export function shellSpec(raw: unknown, label: string): ShellSpec {
   return { command, workingDirectory, env, ...(timeout === undefined ? {} : { timeout }), outputs };
 }
 
-// Omitted agent limits are unbounded; other step kinds retain their one-visit default.
+// Omitted limits are unbounded for agent, shell, and human steps.
 export function stepMaxVisits(step: RecordValue, id: string): number | undefined {
-  if (step.maxVisits === undefined) return typeof step.agent === "string" ? undefined : 1;
+  if (step.maxVisits === undefined) return undefined;
   if (typeof step.maxVisits !== "number" || !Number.isInteger(step.maxVisits) || step.maxVisits < 1) {
     return fail(`Step '${id}' maxVisits must be a positive integer`);
   }

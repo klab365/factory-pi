@@ -5,13 +5,13 @@ import { Text } from "@earendil-works/pi-tui";
 import { existsSync } from "node:fs";
 import { initProject, listPipelines, setupPrompt } from "./init";
 import { validatePipeline } from "./pipeline-validation";
+import { runPipeline } from "./runner";
 import {
   chooseRun,
   workspaceIdentity,
   parseCommand,
   promptInputs,
   readRuns,
-  runChild,
   saveRun,
   type Request,
   type Run,
@@ -107,9 +107,15 @@ export default function factoryExtension(pi: ExtensionAPI) {
         runId: run.runId,
         instruction: request.instruction,
       });
-      activeRun = runChild(
-        ctx.cwd,
-        request,
+      activeRun = runPipeline(
+        request.pipeline,
+        Object.entries(request.inputs ?? {}).map(([key, value]) => `--${key}=${value}`),
+        {
+          mode: request.mode,
+          runId: request.runId,
+          ...(request.requestId ? { requestId: request.requestId } : {}),
+          ...(request.instruction ? { instruction: request.instruction } : {}),
+        },
         (event) => {
           if (controller.signal.aborted) return;
           if (event.type === "completed")
@@ -121,17 +127,16 @@ export default function factoryExtension(pi: ExtensionAPI) {
             ctx.ui.setStatus("factory", message.split("\n")[0]);
           }
         },
-        controller.signal,
-        {
-          human: async (prompt) => {
-            if (!ctx.hasUI) throw new Error("Human input requires interactive Pi");
-            // The complete prompt is in tool progress/history, not the editor-sized
-            // dialog title: approval prompts can contain entire review reports.
-            return prompt.choices
-              ? ctx.ui.select("Factory decision — see output above", prompt.choices)
-              : ctx.ui.input("Factory response — see output above");
-          },
+        async (prompt) => {
+          if (!ctx.hasUI) throw new Error("Human input requires interactive Pi");
+          // The complete prompt is in tool progress/history, not the editor-sized
+          // dialog title: approval prompts can contain entire review reports.
+          return prompt.choices
+            ? ctx.ui.select("Factory decision — see output above", prompt.choices)
+            : ctx.ui.input("Factory response — see output above");
         },
+        controller.signal,
+        ctx.cwd,
       );
       await activeRun;
       saveRun(ctx.cwd, { ...run, status: "completed", pending: undefined });

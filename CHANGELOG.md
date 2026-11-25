@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.0 (2026-11-25)
+
+## What's Changed
+* feat(runner): execute factory pipelines in-process by @BuriKizilkaya in https://github.com/klab365/factory-pi/pull/51
+
+
+**Full Changelog**: https://github.com/klab365/factory-pi/compare/pi-software-factory-v0.5.2...pi-software-factory-v0.6.0
+
 ## 0.5.2 (2026-11-24)
 
 ## What's Changed

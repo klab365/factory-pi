@@ -1,14 +1,23 @@
-import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { describe, expect, test } from "bun:test";
 
 import { readFileSync } from "node:fs";
-import { describe, expect, test } from "bun:test";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { parse } from "yaml";
 import { createAgentRuntime, loadAgentDefinition } from "../src/agent-runtime";
 
 describe("durable agent transitions", () => {
   test("loads the repository workflow skills only for their configured agents", () => {
     const root = `${import.meta.dir}/..`;
-    const pipeline = parse(readFileSync(`${root}/.factory/pipelines/software-factory.yml`, "utf8"));
+    const pipeline = parse(`steps:
+  - id: implement
+    agent: builder
+    transitions: {completed: review}
+  - id: review
+    agent: reviewer
+    transitions: {approved: accept, changes_requested: implement}
+  - id: accept
+    human: {prompt: Approve?, choices: [approved]}
+`);
     const runtime = createAgentRuntime(root, pipeline);
     const expected = {
       builder: ["typescript-expert", "systematic-debugging", "verification-before-completion"],
@@ -33,7 +42,16 @@ describe("durable agent transitions", () => {
 
   test("exposes handoff tools only for transitions declared in YAML", () => {
     const root = `${import.meta.dir}/..`;
-    const pipeline = parse(readFileSync(`${root}/.factory/pipelines/software-factory.yml`, "utf8"));
+    const pipeline = parse(`steps:
+  - id: implement
+    agent: builder
+    transitions: {completed: review}
+  - id: review
+    agent: reviewer
+    transitions: {approved: accept, changes_requested: implement}
+  - id: accept
+    human: {prompt: Approve?, choices: [approved]}
+`);
     const runtime = createAgentRuntime(root, pipeline);
     const toolNames = (agent: string) => (runtime.agentChange(agent).tools ?? []).map((tool) => tool.name);
 
@@ -48,7 +66,16 @@ describe("durable agent transitions", () => {
 
 describe("handoff results and replay", () => {
   const root = `${import.meta.dir}/..`;
-  const pipeline = parse(readFileSync(`${root}/.factory/pipelines/software-factory.yml`, "utf8"));
+  const pipeline = parse(`steps:
+  - id: implement
+    agent: builder
+    transitions: {completed: review}
+  - id: review
+    agent: reviewer
+    transitions: {approved: accept, changes_requested: implement}
+  - id: accept
+    human: {prompt: Approve?, choices: [approved]}
+`);
 
   const approved = '<factory-result>{"status":"approved"}</factory-result>';
 

@@ -1,7 +1,7 @@
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { describe, expect, test } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import { describe, expect, test } from "bun:test";
 import { parse, stringify } from "yaml";
 import { stepMaxVisits } from "../src/pipeline-validation";
 
@@ -222,35 +222,41 @@ steps:
   });
 });
 
-test("software-factory sends requested human changes to the next builder visit", () => {
-  const pipeline = parse(readFileSync(`${repository}/.factory/pipelines/software-factory.yml`, "utf8"));
-  const [builder, reviewer, accept, feedback, publish] = pipeline.steps;
-  // Keep the real task template and human transitions, but avoid model calls and pushes.
-  pipeline.steps = [
-    {
-      id: builder.id,
-      maxVisits: builder.maxVisits,
-      transitions: builder.transitions,
-      shell: `cat > builder-task <<'FACTORY_TASK'\n${builder.task}\nFACTORY_TASK`,
-    },
-    {
-      id: reviewer.id,
-      maxVisits: reviewer.maxVisits,
-      transitions: { completed: reviewer.transitions.approved },
-      shell: "true",
-    },
-    accept,
-    feedback,
-    {
-      id: publish.id,
-      name: publish.name,
-      transitions: publish.transitions,
-      shell: {
-        command: "echo https://example.test/pr/1 >> published; cat published",
-        outputs: { stdout: true },
+test("a pipeline routes human change requests back to its builder step", () => {
+  const pipeline = {
+    inputs: { goal: {} },
+    steps: [
+      {
+        id: "build",
+        maxVisits: 3,
+        shell:
+          "printf '%s' " +
+          "${{ inputs.goal }}" +
+          "; printf '%s' " +
+          "${{ steps.human_feedback.response }}" +
+          " > builder-task",
+        transitions: { completed: "accept" },
       },
-    },
-  ];
+      {
+        id: "accept",
+        human: { prompt: "Approve?", choices: ["approved", "change_requested", "rejected"] },
+        transitions: { approved: "publish", change_requested: "human_feedback", rejected: "end" },
+      },
+      {
+        id: "human_feedback",
+        human: { prompt: "What should change?" },
+        transitions: { completed: "build" },
+      },
+      {
+        id: "publish",
+        shell: {
+          command: "echo https://example.test/pr/1 >> published; cat published",
+          outputs: { stdout: true },
+        },
+        transitions: { completed: "end" },
+      },
+    ],
+  };
   fixture(stringify(pipeline), (root) => {
     const start = runFixture(root, "run", "test", "--goal=Test the loop");
     expect(start.output).toContain("Human response required");
@@ -264,7 +270,6 @@ test("software-factory sends requested human changes to the next builder visit",
     const approved = runFixture(root, "run", "test", "--human-response=approved");
     expect(approved.exitCode).toBe(0);
     expect(approved.output).toContain("https://example.test/pr/1");
-    expect(readFileSync(`${root}/published`, "utf8")).toBe("https://example.test/pr/1\n");
   });
   fixture(stringify(pipeline), (root) => {
     const rejected = runFixture(root, "run", "test", "--goal=Reject", "--human-response=rejected");

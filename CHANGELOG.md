@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.0 (2026-11-26)
+
+## What's Changed
+* feat(bootstrap): add standard project pipeline by @BuriKizilkaya in https://github.com/klab365/factory-pi/pull/53
+
+
+**Full Changelog**: https://github.com/klab365/factory-pi/compare/pi-software-factory-v0.6.0...pi-software-factory-v0.7.0
+
 ## 0.6.0 (2026-11-25)
 
 ## What's Changed

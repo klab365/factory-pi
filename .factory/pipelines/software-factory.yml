@@ -5,12 +5,25 @@ inputs:
     required: true
 
 steps:
+  - id: plan
+    name: Plan requested change
+    agent: planner
+    maxVisits: 2
+    transitions:
+      completed: implement
+    task: |-
+      Create a concise implementation plan for this goal, based on the repository and its conventions:
+
+      ${{ inputs.goal }}
+
+      Include concrete tasks and acceptance criteria. Do not modify files.
+
   - id: implement
     name: Implement requested change
     agent: builder
     maxVisits: 3
     transitions:
-      completed: review
+      completed: verify
     task: |-
       Work in the current factory-pi repository and implement this goal:
 
@@ -20,8 +33,17 @@ steps:
       Address prior reviewer feedback if provided:
       ${{ steps.review.feedback }}
 
+      Plan:
+      ${{ steps.plan.summary }}
+
       Address the latest human feedback if provided:
       ${{ steps.human_feedback.response }}
+
+  - id: verify
+    name: Verify implementation
+    shell: mise run check
+    transitions:
+      completed: review
 
   - id: review
     name: Review implementation
@@ -33,7 +55,6 @@ steps:
     task: |-
       Review the changes made in this run for correctness, regressions, and missing tests.
       Focus on the requested goal: ${{ inputs.goal }}.
-      Run `mise run check` and report its result.
       Report actionable findings with file and line references. Do not modify files.
       Return status `approved` when clean, otherwise `changes_requested`
       and put actionable fixes in `feedback`.

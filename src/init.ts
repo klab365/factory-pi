@@ -12,11 +12,14 @@ do not create or edit project configuration until I approve the proposed plan.
    follow-up questions until the workflow is specific enough to implement without guessing.
    Cover desired outcomes, inputs, steps and order, checks, failure/correction paths, review and human
    approval points, agent responsibilities and tool access, reusable skills, and required integrations.
-   Skip questions already answered by the repository or documentation. Let me say "you decide";
-   then make an evidence-based recommendation and state assumptions.
+   Use Plan → Builder → Verify-guard → independent Review → Human approval → Publisher as the default
+   for code changes, adapting names and checks to repository evidence. Failed shell checks stop the run
+   and must be corrected before resuming. Skip questions already answered by the repository or docs.
+   Let me say "you decide"; then make an evidence-based recommendation and state assumptions.
 3. Discuss whether multiple specialist agents and independent review would help this workflow.
-   Do not prescribe a builder, reviewer, fixed agent count, or a fixed pipeline shape.
-   Derive the design from my answers, project evidence, and the Factory syntax documentation:
+   Treat that standard code-change pipeline as a starting point, not a constraint: adapt or omit stages
+   when repository evidence or my answers justify it. Derive the design from my answers, project evidence,
+   and the Factory syntax documentation:
    https://klab365.github.io/factory-pi/syntax/
    Read that documentation before generating files; use only supported fields and syntax.
    If we choose independent review for code changes, place it after implementation/checks and before
